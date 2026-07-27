@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
-import { ArrowRight, Check, Info, Link2, Lock, RotateCcw, X } from 'lucide-vue-next';
+import { ArrowRight, Check, Info, Link2, Lock, RotateCcw, Undo2, X } from 'lucide-vue-next';
 import PromptDiff from '@/components/PromptDiff.vue';
 import { Alert, Badge, Button, Card, CardContent, Separator } from '@/components/ui';
 import {
@@ -27,18 +27,42 @@ const props = defineProps<{
   /** Resolved issues this proposal cites, for the evidence line. */
   linkedIssues: Issue[];
   busy: boolean;
+  /**
+   * The agent's current version. An applied change can only be undone on its
+   * own while it is still the latest one, because restoring the snapshot
+   * beneath an earlier change would discard everything stacked above it.
+   */
+  currentVersion?: number;
 }>();
 
 const emit = defineEmits<{
   apply: [recommendation: Recommendation];
   dismiss: [recommendation: Recommendation];
   restore: [recommendation: Recommendation];
+  revert: [recommendation: Recommendation];
 }>();
 
 const showEvidence = ref(false);
 
 const isApplicable = computed(() => props.recommendation.applicability === 'applicable');
 const isPending = computed(() => props.recommendation.status === 'proposed');
+
+const isRevertable = computed(
+  () =>
+    props.recommendation.status === 'applied' &&
+    props.recommendation.appliedVersion !== undefined &&
+    props.recommendation.appliedVersion === props.currentVersion &&
+    props.recommendation.appliedVersion > 1,
+);
+
+/** Applied, but no longer the latest change — undo is a version rollback now. */
+const isSupersededByLaterChange = computed(
+  () =>
+    props.recommendation.status === 'applied' &&
+    props.recommendation.appliedVersion !== undefined &&
+    props.currentVersion !== undefined &&
+    props.recommendation.appliedVersion < props.currentVersion,
+);
 
 /** Long text gets a line diff; anything else is a simple before → after. */
 const isTextChange = computed(() => {
@@ -257,6 +281,30 @@ const statusVariant = computed(() => {
           Restore to pending
         </Button>
       </div>
+
+      <!-- Undo for an applied change, offered only while it is still the top of the history -->
+      <div v-else-if="isRevertable" class="pt-1">
+        <Button
+          variant="outline"
+          size="sm"
+          :loading="props.busy"
+          @click="emit('revert', props.recommendation)"
+        >
+          <Undo2 v-if="!props.busy" />
+          Revert this change
+        </Button>
+      </div>
+
+      <!--
+        Deliberately not a disabled Revert button. "Undo this change" and "roll
+        back to a version" are different operations, and offering the first one
+        greyed out invites the user to expect it to do the second.
+      -->
+      <p v-else-if="isSupersededByLaterChange" class="pt-1 text-xs text-muted-foreground">
+        Later changes have been applied since this one. Undoing it means rolling back to
+        v{{ (props.recommendation.appliedVersion ?? 1) - 1 }} from the History tab, which also
+        discards those.
+      </p>
     </CardContent>
   </Card>
 </template>

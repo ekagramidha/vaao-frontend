@@ -4,6 +4,7 @@ import type {
   AgentOverview,
   AgentVersion,
   Analysis,
+  AnalysisComparison,
   ApplyResult,
   Call,
   Issue,
@@ -51,6 +52,9 @@ export const api = {
   listAnalyses: (agentId: string) => request<Analysis[]>(`/agents/${agentId}/analyses`),
   getAnalysis: (analysisId: string) =>
     request<{ analysis: Analysis; issues: Issue[] }>(`/analyses/${analysisId}`),
+  /** Null when this is the first analysis for the agent. */
+  getAnalysisComparison: (analysisId: string) =>
+    request<AnalysisComparison | null>(`/analyses/${analysisId}/comparison`),
   listIssues: (agentId: string, status?: 'open' | 'addressed' | 'dismissed') =>
     request<Issue[]>(`/agents/${agentId}/issues`, { query: { status } }),
 
@@ -63,6 +67,14 @@ export const api = {
   listTestCases: (agentId: string) => request<TestCase[]>(`/agents/${agentId}/test-cases`),
   archiveTestCase: (agentId: string, testCaseId: string) =>
     request<TestCase>(`/agents/${agentId}/test-cases/${testCaseId}`, { method: 'DELETE' }),
+  /** Records what happened when a person ran this scenario on the real agent. */
+  recordManualRun: (testCaseId: string, verdict: 'passed' | 'failed', note?: string) =>
+    request<TestCase>(`/test-cases/${testCaseId}/manual-run`, {
+      method: 'PUT',
+      body: { verdict, ...(note ? { note } : {}) },
+    }),
+  clearManualRun: (testCaseId: string) =>
+    request<TestCase>(`/test-cases/${testCaseId}/manual-run`, { method: 'DELETE' }),
 
   startTestRun: (
     agentId: string,
@@ -101,6 +113,11 @@ export const api = {
     }),
   restoreRecommendation: (agentId: string, recommendationId: string) =>
     request<Recommendation>(`/agents/${agentId}/recommendations/${recommendationId}/restore`, {
+      method: 'POST',
+    }),
+  /** Undoes an applied change. 409s when later changes sit on top of it. */
+  revertRecommendation: (agentId: string, recommendationId: string) =>
+    request<RollbackResult>(`/agents/${agentId}/recommendations/${recommendationId}/revert`, {
       method: 'POST',
     }),
 

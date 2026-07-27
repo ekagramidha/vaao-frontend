@@ -17,8 +17,11 @@ import EmptyState from '@/components/EmptyState.vue';
 import IssueCard from '@/components/IssueCard.vue';
 import JobProgress from '@/components/JobProgress.vue';
 import LoopStepper, { type LoopStep, type StepState } from '@/components/LoopStepper.vue';
+import PromptDiff from '@/components/PromptDiff.vue';
 import RecommendationCard from '@/components/RecommendationCard.vue';
+import RegressionSummary from '@/components/RegressionSummary.vue';
 import ScoreStat from '@/components/ScoreStat.vue';
+import SimulationNotice from '@/components/SimulationNotice.vue';
 import TestCaseCard from '@/components/TestCaseCard.vue';
 import TranscriptViewer from '@/components/TranscriptViewer.vue';
 import VersionTimeline from '@/components/VersionTimeline.vue';
@@ -43,7 +46,7 @@ import { recommendationStatusLabel, runPurposeLabel, titleCase } from '@/lib/lab
 import { api } from '@/services/api';
 import { useAgentsStore } from '@/stores/agents';
 import { useOptimizerStore } from '@/stores/optimizer';
-import type { Call, Recommendation, RecommendationStatus } from '@/types/api';
+import type { ApplyResult, Call, Recommendation, RecommendationStatus } from '@/types/api';
 
 /**
  * The agent workspace: all three optimizer loops on one screen.
@@ -73,7 +76,9 @@ const overview = computed(() => agentsStore.overview);
 const analysisJob = useJobRunner({
   onSuccess: async () => {
     await Promise.all([
-      optimizerStore.loadAnalyses(props.agentId),
+      // The comparison is against whichever analysis is newest, so it has to be
+      // sequenced after the list reloads rather than fetched alongside it.
+      optimizerStore.loadAnalyses(props.agentId).then(optimizerStore.loadComparison),
       optimizerStore.loadIssues(props.agentId),
       agentsStore.loadOverview(props.agentId),
     ]);
@@ -221,6 +226,10 @@ const loopSteps = computed<LoopStep[]>(() => {
       key: 'test-generation',
       label: 'Generate tests',
       icon: FlaskConical,
+      // Writing the suite and running it are one loop with two actions, so they
+      // share a card. They stay separate steps because their staleness differs:
+      // a current suite can still hold a score measured two versions ago.
+      group: 'testing',
       state: stateFor(
         hasTestCases.value,
         testCasesStale.value,
@@ -240,6 +249,7 @@ const loopSteps = computed<LoopStep[]>(() => {
       key: 'test-run',
       label: 'Run suite',
       icon: PlayCircle,
+      group: 'testing',
       state: stateFor(
         Boolean(run),
         runStale.value,
@@ -297,7 +307,7 @@ async function runStep(key: string): Promise<void> {
       );
       return;
     case 'test-run':
-      await runVerification();
+      await runSuite();
       return;
     case 'recommendations':
       await recommendJob.start(() => api.generateRecommendations(props.agentId));
@@ -403,8 +413,66 @@ watch(
   },
 );
 
-async function applyRecommendation(recommendation: Recommendation): Promise<void> {
+/* Apply confirmation ------------------------------------------------------- */
+
+/**
+ * Apply is a two-step: preview, then confirm.
+ *
+ * The write lands on a live agent that is answering real calls, so it deserves
+ * a deliberate second action rather than a single click. The preview is also
+ * the only accurate diff once another prompt change has already been applied —
+ * the server rebases anchored edits onto the current prompt, so what is stored
+ * on the recommendation is a diff against a prompt that has since moved.
+ */
+const pendingApply = ref<Recommendation | null>(null);
+const applyPreview = ref<ApplyResult | null>(null);
+const previewError = ref<string | null>(null);
+const isPreviewing = ref(false);
+
+/** The rebased diff when the preview resolved, the stored one until then. */
+const previewChange = computed(
+  () => applyPreview.value?.recommendation.change ?? pendingApply.value?.change ?? null,
+);
+
+const isPreviewTextChange = computed(() => {
+  const change = previewChange.value;
+  if (!change) return false;
+  return (
+    typeof change.before === 'string' && typeof change.after === 'string' && change.before.length > 200
+  );
+});
+
+async function requestApply(recommendation: Recommendation): Promise<void> {
+  pendingApply.value = recommendation;
+  applyPreview.value = null;
+  previewError.value = null;
+  isPreviewing.value = true;
+
+  const { result, error } = await optimizerStore.previewRecommendation(
+    props.agentId,
+    recommendation.id,
+  );
+  // A late response for a dialog the user already closed must not repopulate it.
+  if (pendingApply.value?.id !== recommendation.id) return;
+
+  applyPreview.value = result;
+  previewError.value = error;
+  isPreviewing.value = false;
+}
+
+function cancelApply(): void {
+  pendingApply.value = null;
+  applyPreview.value = null;
+  previewError.value = null;
+  isPreviewing.value = false;
+}
+
+async function confirmApply(): Promise<void> {
+  const recommendation = pendingApply.value;
+  if (!recommendation) return;
+
   const result = await optimizerStore.applyRecommendation(props.agentId, recommendation.id);
+  cancelApply();
   if (!result) return;
 
   await Promise.all([
@@ -413,18 +481,46 @@ async function applyRecommendation(recommendation: Recommendation): Promise<void
     agentsStore.loadVersions(props.agentId),
   ]);
 
-  notice.value = `Applied to HighLevel as version ${result.version}. Re-run the suite to confirm it helped.`;
+  notice.value = `Applied to HighLevel as version ${result.version}. It is live on this agent now — revert it from the History tab if that was not intended.`;
+}
+
+async function revertRecommendation(recommendation: Recommendation): Promise<void> {
+  const result = await optimizerStore.revertRecommendation(props.agentId, recommendation.id);
+  if (!result) return;
+
+  await Promise.all([
+    agentsStore.loadAgents(),
+    agentsStore.loadOverview(props.agentId),
+    agentsStore.loadVersions(props.agentId),
+  ]);
+
+  notice.value = `Reverted "${recommendation.title}", recorded as v${result.version}.${
+    result.unrestoredFields.length
+      ? ' Actions were not restored — they are created and deleted through separate endpoints.'
+      : ''
+  }`;
 }
 
 /**
- * Runs the suite as a verification pass, pinned to the previous run so the
- * results screen can show a per-case delta rather than two unrelated scores.
+ * Runs the suite.
+ *
+ * The first run is a **baseline**: there is nothing to compare it against, and
+ * its job is to surface failures the transcripts could not — real calls only
+ * show what callers happened to do, while the suite probes the scenarios they
+ * have not tried yet. Those failures are then evidence the recommender reads.
+ *
+ * Every run after that is a **verification** pass pinned to the previous one,
+ * so the results screen can show a per-case delta rather than two unrelated
+ * scores. Labelling the first run "verification" would claim it verified
+ * something when there was no prior state to verify against.
  */
-async function runVerification(): Promise<void> {
+async function runSuite(): Promise<void> {
+  const previous = latestRun.value;
+
   await testRunJob.start(() =>
     api.startTestRun(props.agentId, {
-      purpose: 'verification',
-      ...(latestRun.value ? { comparisonRunId: latestRun.value.id } : {}),
+      purpose: previous ? 'verification' : 'baseline',
+      ...(previous ? { comparisonRunId: previous.id } : {}),
     }),
   );
 }
@@ -477,7 +573,7 @@ async function runVerification(): Promise<void> {
       <CardContent class="pt-5">
         <div class="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
           <ScoreStat
-            label="Transcript score"
+            label="Transcript score (real calls)"
             :value="overview.analysis?.score ?? null"
             tone
             :hint="
@@ -495,8 +591,13 @@ async function runVerification(): Promise<void> {
                 : 'Nothing critical'
             "
           />
+          <!--
+            "Simulated" is in the label rather than the hint. This tile sits
+            beside "Transcript score", which is measured on real calls, and at a
+            glance the two read as the same kind of number. They are not.
+          -->
           <ScoreStat
-            label="Test suite score"
+            label="Suite score (simulated)"
             :value="overview.testing.latestRun?.score ?? null"
             tone
             :delta="overview.testing.scoreDelta"
@@ -588,6 +689,15 @@ async function runVerification(): Promise<void> {
             </p>
           </CardContent>
         </Card>
+
+        <!--
+          Placed above the issue list because it answers the question the user
+          arrives with on any run after the first: did last time's change work?
+        -->
+        <RegressionSummary
+          v-if="optimizerStore.comparison"
+          :comparison="optimizerStore.comparison"
+        />
 
         <EmptyState
           v-if="!optimizerStore.openIssues.length && !hasAnalysis"
@@ -681,17 +791,26 @@ async function runVerification(): Promise<void> {
               variant="outline"
               :loading="testRunJob.isRunning.value"
               :disabled="anyJobRunning"
-              @click="runVerification"
+              @click="runSuite"
             >
               <PlayCircle v-if="!testRunJob.isRunning.value" />
               Run suite
             </Button>
           </div>
+
+          <!-- Stated before the suite is run, not only on the results screen -->
+          <SimulationNotice explain-delta />
+
           <TestCaseCard
             v-for="testCase in optimizerStore.testCases"
             :key="testCase.id"
             :test-case="testCase"
+            :busy="optimizerStore.busy === testCase.id"
             @archive="optimizerStore.archiveTestCase(props.agentId, testCase.id)"
+            @record-manual="
+              (target, verdict, note) => optimizerStore.recordManualRun(target.id, verdict, note)
+            "
+            @clear-manual="(target) => optimizerStore.clearManualRun(target.id)"
           />
         </template>
       </TabsContent>
@@ -764,7 +883,7 @@ async function runVerification(): Promise<void> {
               :recommendation="recommendation"
               :linked-issues="issuesFor(recommendation)"
               :busy="optimizerStore.busy === recommendation.id"
-              @apply="applyRecommendation"
+              @apply="requestApply"
               @dismiss="optimizerStore.rejectRecommendation(props.agentId, recommendation.id)"
             />
           </CollapsibleSection>
@@ -788,7 +907,9 @@ async function runVerification(): Promise<void> {
               :recommendation="recommendation"
               :linked-issues="issuesFor(recommendation)"
               :busy="optimizerStore.busy === recommendation.id"
+              :current-version="agent?.currentVersion"
               @restore="optimizerStore.restoreRecommendation(props.agentId, recommendation.id)"
+              @revert="revertRecommendation"
             />
           </CollapsibleSection>
         </template>
@@ -845,6 +966,79 @@ async function runVerification(): Promise<void> {
         </Alert>
         <TranscriptViewer :turns="openCall.turns" />
       </div>
+    </Dialog>
+
+    <!--
+      Confirm before writing to a live agent.
+
+      The diff shown here comes from the server's dry run, not from the stored
+      recommendation, because prompt edits are rebased onto the current prompt
+      at apply time. Approving the stored diff would mean approving text that is
+      not what gets written.
+    -->
+    <Dialog
+      v-if="pendingApply"
+      :open="Boolean(pendingApply)"
+      title="Apply this change to your live agent?"
+      :description="pendingApply.title"
+      size="xl"
+      @update:open="(value) => !value && cancelApply()"
+    >
+      <div class="space-y-4">
+        <Alert variant="advisory">
+          <div class="flex gap-2">
+            <AlertCircle class="mt-0.5 size-3.5 shrink-0" />
+            <p class="text-xs">
+              This writes to
+              <span class="font-medium">{{ agent?.agentName }}</span>
+              in HighLevel immediately. The agent answers real calls, so the change takes effect on
+              the next one. A new version is recorded and can be reverted from the History tab.
+            </p>
+          </div>
+        </Alert>
+
+        <div v-if="isPreviewing" class="space-y-2">
+          <Skeleton class="h-4 w-48" />
+          <Skeleton class="h-32 w-full" />
+        </div>
+
+        <Alert v-else-if="previewError" variant="destructive">
+          <p class="text-xs">{{ previewError }}</p>
+        </Alert>
+
+        <template v-else-if="previewChange">
+          <p class="text-[11px] tracking-wide uppercase text-muted-foreground">
+            Exactly what will be written
+          </p>
+
+          <PromptDiff
+            v-if="isPreviewTextChange"
+            :before="String(previewChange.before ?? '')"
+            :after="String(previewChange.after ?? '')"
+          />
+          <div v-else class="rounded-md border border-pass/30 bg-pass/5 px-3 py-2">
+            <pre class="font-mono-tight break-words whitespace-pre-wrap text-xs">{{
+              typeof previewChange.after === 'string'
+                ? previewChange.after
+                : JSON.stringify(previewChange.after, null, 2)
+            }}</pre>
+          </div>
+        </template>
+      </div>
+
+      <template #footer>
+        <div class="flex items-center justify-end gap-2">
+          <Button variant="ghost" size="sm" @click="cancelApply">Cancel</Button>
+          <Button
+            size="sm"
+            :disabled="isPreviewing || Boolean(previewError)"
+            :loading="optimizerStore.busy === pendingApply.id"
+            @click="confirmApply"
+          >
+            Apply to HighLevel
+          </Button>
+        </div>
+      </template>
     </Dialog>
   </div>
 </template>

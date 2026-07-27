@@ -3,10 +3,12 @@ import { computed, ref } from 'vue';
 import { api, ApiClientError } from '@/services/api';
 import type {
   Analysis,
+  AnalysisComparison,
   ApplyResult,
   Call,
   Issue,
   Recommendation,
+  RollbackResult,
   TestCase,
   TestResult,
   TestRun,
@@ -24,6 +26,8 @@ export const useOptimizerStore = defineStore('optimizer', () => {
   /* Loop 1 */
   const analyses = ref<Analysis[]>([]);
   const issues = ref<Issue[]>([]);
+  /** Issue-level diff against the previous analysis. Null on a first run. */
+  const comparison = ref<AnalysisComparison | null>(null);
 
   /* Loop 2 */
   const testCases = ref<TestCase[]>([]);
@@ -84,6 +88,26 @@ export const useOptimizerStore = defineStore('optimizer', () => {
     }
   }
 
+  /**
+   * Loads the regression diff for the newest completed analysis.
+   *
+   * Depends on `analyses` already being loaded, so it is sequenced after
+   * `loadAnalyses` rather than run alongside it.
+   */
+  async function loadComparison(): Promise<void> {
+    const latest = analyses.value.find((analysis) => analysis.status === 'completed');
+    if (!latest) {
+      comparison.value = null;
+      return;
+    }
+    try {
+      const { data } = await api.getAnalysisComparison(latest.id);
+      comparison.value = data;
+    } catch (caught) {
+      capture(caught, 'Could not compare with the previous analysis.');
+    }
+  }
+
   async function loadTestCases(agentId: string): Promise<void> {
     try {
       const { data } = await api.listTestCases(agentId);
@@ -139,7 +163,7 @@ export const useOptimizerStore = defineStore('optimizer', () => {
   async function loadAll(agentId: string): Promise<void> {
     error.value = null;
     await Promise.all([
-      loadAnalyses(agentId),
+      loadAnalyses(agentId).then(loadComparison),
       loadIssues(agentId),
       loadTestCases(agentId),
       loadTestRuns(agentId),
@@ -151,6 +175,7 @@ export const useOptimizerStore = defineStore('optimizer', () => {
   function clear(): void {
     analyses.value = [];
     issues.value = [];
+    comparison.value = null;
     testCases.value = [];
     testRuns.value = [];
     recommendations.value = [];
@@ -170,6 +195,65 @@ export const useOptimizerStore = defineStore('optimizer', () => {
       testCases.value = testCases.value.filter((testCase) => testCase.id !== testCaseId);
     } catch (caught) {
       capture(caught, 'Could not archive the test case.');
+    }
+  }
+
+  /** Replaces one case in place, so recording a verdict does not refetch the suite. */
+  function replaceTestCase(updated: TestCase): void {
+    testCases.value = testCases.value.map((testCase) =>
+      testCase.id === updated.id ? updated : testCase,
+    );
+  }
+
+  async function recordManualRun(
+    testCaseId: string,
+    verdict: 'passed' | 'failed',
+    note?: string,
+  ): Promise<void> {
+    busy.value = testCaseId;
+    try {
+      const { data } = await api.recordManualRun(testCaseId, verdict, note);
+      replaceTestCase(data);
+    } catch (caught) {
+      capture(caught, 'Could not record the result.');
+    } finally {
+      busy.value = null;
+    }
+  }
+
+  async function clearManualRun(testCaseId: string): Promise<void> {
+    busy.value = testCaseId;
+    try {
+      const { data } = await api.clearManualRun(testCaseId);
+      replaceTestCase(data);
+    } catch (caught) {
+      capture(caught, 'Could not clear the result.');
+    } finally {
+      busy.value = null;
+    }
+  }
+
+  /**
+   * Resolves what would actually be written, without writing it.
+   *
+   * This is not cosmetic. A prompt recommendation is stored as anchored edits
+   * plus a snapshot of the prompt at generation time, and the server recomputes
+   * the result against the live prompt on apply. So once any other prompt
+   * change has landed, the stored diff is out of date and the preview is the
+   * only accurate view of what the user is about to approve. It also surfaces
+   * an anchor that no longer resolves before the write rather than after it.
+   */
+  async function previewRecommendation(
+    agentId: string,
+    recommendationId: string,
+  ): Promise<{ result: ApplyResult | null; error: string | null }> {
+    try {
+      const { data } = await api.previewRecommendation(agentId, recommendationId);
+      return { result: data, error: null };
+    } catch (caught) {
+      const message =
+        caught instanceof Error ? caught.message : 'Could not preview the recommendation.';
+      return { result: null, error: message };
     }
   }
 
@@ -197,6 +281,35 @@ export const useOptimizerStore = defineStore('optimizer', () => {
         error.value = caught.message;
       } else {
         capture(caught, 'Could not apply the recommendation.');
+      }
+      return null;
+    } finally {
+      busy.value = null;
+    }
+  }
+
+  /**
+   * Undoes an applied change by restoring the version beneath it.
+   *
+   * The server refuses when later changes are stacked on top, and that refusal
+   * names them — so it is surfaced verbatim rather than replaced with a generic
+   * failure message, because it tells the user what to do instead.
+   */
+  async function revertRecommendation(
+    agentId: string,
+    recommendationId: string,
+  ): Promise<RollbackResult | null> {
+    busy.value = recommendationId;
+    error.value = null;
+    try {
+      const { data } = await api.revertRecommendation(agentId, recommendationId);
+      await Promise.all([loadRecommendations(agentId), loadIssues(agentId)]);
+      return data;
+    } catch (caught) {
+      if (caught instanceof ApiClientError && caught.status === 409) {
+        error.value = caught.message;
+      } else {
+        capture(caught, 'Could not revert the change.');
       }
       return null;
     } finally {
@@ -236,6 +349,7 @@ export const useOptimizerStore = defineStore('optimizer', () => {
   return {
     analyses,
     issues,
+    comparison,
     testCases,
     testRuns,
     selectedRun,
@@ -252,6 +366,7 @@ export const useOptimizerStore = defineStore('optimizer', () => {
     appliedRecommendations,
     issuesById,
     loadAnalyses,
+    loadComparison,
     loadIssues,
     loadTestCases,
     loadTestRuns,
@@ -261,8 +376,12 @@ export const useOptimizerStore = defineStore('optimizer', () => {
     loadAll,
     clear,
     archiveTestCase,
+    recordManualRun,
+    clearManualRun,
+    previewRecommendation,
     applyRecommendation,
     rejectRecommendation,
     restoreRecommendation,
+    revertRecommendation,
   };
 });

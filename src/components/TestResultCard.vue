@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import { Check, MessageSquare, X } from 'lucide-vue-next';
+import SimulationNotice from '@/components/SimulationNotice.vue';
 import TranscriptViewer from '@/components/TranscriptViewer.vue';
 import { Badge, Button, Card, CardContent, Dialog } from '@/components/ui';
 import { scoreTone } from '@/lib/format';
@@ -147,9 +148,16 @@ function openTranscript(turnIndex?: number): void {
   <Dialog
     v-model:open="showTranscript"
     :title="props.result.testCaseTitle"
-    description="Simulated conversation against the agent's live configuration"
+    description="Simulated conversation against the agent's live prompt"
     size="lg"
   >
-    <TranscriptViewer :turns="props.result.simulatedTurns" :highlight-index="highlightTurn" />
+    <div class="space-y-3">
+      <!--
+        Right above the transcript, because this is the screen where a reader is
+        most likely to mistake a simulation for a recording of a real call.
+      -->
+      <SimulationNotice variant="inline" />
+      <TranscriptViewer :turns="props.result.simulatedTurns" :highlight-index="highlightTurn" />
+    </div>
   </Dialog>
 </template>

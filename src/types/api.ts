@@ -190,6 +190,18 @@ export interface CallerPersona {
   openingLine: string;
 }
 
+/**
+ * A verdict from a human who ran this scenario against the real agent.
+ *
+ * The only outcome in the product that came from HighLevel's own runtime
+ * rather than from a text simulation.
+ */
+export interface ManualRun {
+  verdict: 'passed' | 'failed';
+  note: string;
+  recordedAt: string;
+}
+
 export interface TestCase {
   id: string;
   ghlAgentId: string;
@@ -203,6 +215,7 @@ export interface TestCase {
   sourceAnalysisId?: string;
   maxTurns: number;
   status: 'active' | 'archived';
+  manualRun?: ManualRun;
   createdAt: string;
 }
 
@@ -246,11 +259,55 @@ export interface TestResult {
   error?: string;
 }
 
+export interface IssueDelta {
+  fingerprint: string;
+  title: string;
+  category: IssueCategory;
+  severity: Severity;
+  /** 0-1 share of calls affected in the earlier analysis. Null if new. */
+  previousRate: number | null;
+  /** 0-1 share of calls affected now. Null if it did not recur. */
+  currentRate: number | null;
+}
+
+/**
+ * Issue-level diff between two analyses of real calls.
+ *
+ * This is the product's only measurement of the real agent on the real
+ * platform. Everything in a test run is simulated.
+ */
+export interface AnalysisComparison {
+  previousAnalysisId: string;
+  previousCompletedAt: string | null;
+  previousCallCount: number;
+  currentCallCount: number;
+  resolved: IssueDelta[];
+  persisting: IssueDelta[];
+  introduced: IssueDelta[];
+  freshCallCount: number;
+  sharedCallCount: number;
+  /** No new calls since the last analysis, so nothing here measures a fix. */
+  readsOnlyOldCalls: boolean;
+  changesBetween: Array<{ version: number; note?: string; createdAt: string }>;
+}
+
+export interface PromptEdit {
+  operation: 'replace' | 'insert_after' | 'append';
+  anchor: string;
+  snippet: string;
+}
+
 export interface ProposedChange {
   field: string;
   before: unknown;
   after: unknown;
   changeSummary: string[];
+  /**
+   * Anchored edits behind an `agentPrompt` change. Present so the diff can be
+   * recomputed against the live prompt at apply time — which is why `before`
+   * and `after` here may be restated after a preview.
+   */
+  promptEdits?: PromptEdit[];
 }
 
 export interface Recommendation {

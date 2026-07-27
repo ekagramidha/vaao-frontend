@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed } from 'vue';
-import { Archive, Target, UserRound } from 'lucide-vue-next';
+import { computed, ref } from 'vue';
+import { Archive, Phone, Target, ThumbsDown, ThumbsUp, UserRound, X } from 'lucide-vue-next';
 import { Badge, Button, Card, CardContent } from '@/components/ui';
+import { formatRelative } from '@/lib/format';
 import { criterionTypeLabel, testCaseTypeLabel } from '@/lib/labels';
 import type { TestCase } from '@/types/api';
 
@@ -11,15 +12,31 @@ import type { TestCase } from '@/types/api';
  * The caller persona's behaviours are shown in full rather than summarised,
  * because they are what the simulation actually executes — "interrupts the
  * agent mid-sentence" is the difference between a test and a description of one.
+ *
+ * The case doubles as a script a person can run themselves by phoning the
+ * agent. That verdict is worth more than the simulated one — it comes from
+ * HighLevel's real runtime — so recording it is offered right here rather than
+ * being buried somewhere separate.
  */
 const props = defineProps<{ testCase: TestCase; busy?: boolean }>();
 
-const emit = defineEmits<{ archive: [testCase: TestCase] }>();
+const emit = defineEmits<{
+  archive: [testCase: TestCase];
+  'record-manual': [testCase: TestCase, verdict: 'passed' | 'failed', note: string];
+  'clear-manual': [testCase: TestCase];
+}>();
 
 const isEdgeCase = computed(() => props.testCase.type === 'edge_case');
 const mustPassCount = computed(
   () => props.testCase.successCriteria.filter((criterion) => criterion.mustPass).length,
 );
+
+const note = ref('');
+
+function record(verdict: 'passed' | 'failed'): void {
+  emit('record-manual', props.testCase, verdict, note.value.trim());
+  note.value = '';
+}
 </script>
 
 <template>
@@ -35,6 +52,15 @@ const mustPassCount = computed(
               Targets {{ props.testCase.derivedFromIssueIds.length }} known issue{{
                 props.testCase.derivedFromIssueIds.length === 1 ? '' : 's'
               }}
+            </Badge>
+            <!-- A real-call verdict outranks anything simulated, so it sits with the title -->
+            <Badge
+              v-if="props.testCase.manualRun"
+              :variant="props.testCase.manualRun.verdict === 'passed' ? 'pass' : 'fail'"
+              class="gap-1"
+            >
+              <Phone class="size-3" />
+              Real call: {{ props.testCase.manualRun.verdict }}
             </Badge>
           </div>
           <p class="text-sm font-medium">{{ props.testCase.title }}</p>
@@ -108,6 +134,73 @@ const mustPassCount = computed(
             <Badge variant="outline">{{ criterionTypeLabel(criterion.type) }}</Badge>
           </li>
         </ul>
+      </div>
+
+      <!--
+        Run it for real.
+
+        Every automated verdict here comes from a text simulation against a
+        model that is not the one HighLevel runs — no speech recognition, no
+        real tool execution, no merge fields. Someone phoning the agent with
+        this script produces the only evidence that does not carry those
+        caveats, and it costs nothing but their time.
+      -->
+      <div class="rounded-md border border-dashed px-3 py-2.5">
+        <div class="mb-1.5 flex items-center gap-1.5 text-[11px] tracking-wide uppercase text-muted-foreground">
+          <Phone class="size-3" />
+          Try it on the real agent
+        </div>
+
+        <template v-if="props.testCase.manualRun">
+          <p class="text-xs">
+            <span
+              class="font-medium"
+              :class="props.testCase.manualRun.verdict === 'passed' ? 'text-pass' : 'text-fail'"
+            >
+              {{ props.testCase.manualRun.verdict === 'passed' ? 'Passed' : 'Failed' }}
+            </span>
+            <span class="text-muted-foreground">
+              on a real call, {{ formatRelative(props.testCase.manualRun.recordedAt) }}
+            </span>
+          </p>
+          <p v-if="props.testCase.manualRun.note" class="mt-1 text-xs text-muted-foreground">
+            “{{ props.testCase.manualRun.note }}”
+          </p>
+          <Button
+            variant="ghost"
+            size="sm"
+            class="mt-1.5 -ml-2"
+            :disabled="props.busy"
+            @click="emit('clear-manual', props.testCase)"
+          >
+            <X />
+            Clear
+          </Button>
+        </template>
+
+        <template v-else>
+          <p class="text-xs text-muted-foreground">
+            Phone the agent and play the caller above. Record what happened — a real verdict
+            outranks the simulated one.
+          </p>
+          <input
+            v-model="note"
+            type="text"
+            placeholder="What happened? (optional)"
+            class="mt-2 w-full rounded-md border bg-background px-2.5 py-1.5 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            @keyup.enter="record('passed')"
+          />
+          <div class="mt-2 flex items-center gap-2">
+            <Button variant="outline" size="sm" :disabled="props.busy" @click="record('passed')">
+              <ThumbsUp />
+              It passed
+            </Button>
+            <Button variant="outline" size="sm" :disabled="props.busy" @click="record('failed')">
+              <ThumbsDown />
+              It failed
+            </Button>
+          </div>
+        </template>
       </div>
     </CardContent>
   </Card>

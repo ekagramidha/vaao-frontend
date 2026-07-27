@@ -3,6 +3,7 @@ import { computed, onMounted, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { ChevronLeft, GitCompare } from 'lucide-vue-next';
 import ScoreStat from '@/components/ScoreStat.vue';
+import SimulationNotice from '@/components/SimulationNotice.vue';
 import TestResultCard from '@/components/TestResultCard.vue';
 import { Alert, Badge, Button, Card, CardContent, Separator, Skeleton } from '@/components/ui';
 import { formatRelative, pluralise } from '@/lib/format';
@@ -75,6 +76,9 @@ watch(
       </div>
 
       <Alert v-if="run.error" variant="destructive">{{ run.error }}</Alert>
+
+      <!-- Above the numbers, so the caveat is read before the score is believed -->
+      <SimulationNotice explain-delta />
 
       <Card>
         <CardContent class="pt-5">
