@@ -1,0 +1,39 @@
+{
+  "name": "ghl-agent-optimizer-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Voice AI Agent Optimizer widget, embedded in the HighLevel interface",
+  "type": "module",
+  "engines": {
+    "node": ">=20.10"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --build && vite build",
+    "preview": "vite preview",
+    "typecheck": "vue-tsc --noEmit"
+  },
+  "dependencies": {
+    "@vueuse/core": "^13.9.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-vue-next": "^0.545.0",
+    "pinia": "^3.0.3",
+    "reka-ui": "^2.5.0",
+    "tailwind-merge": "^3.3.1",
+    "vue": "^3.5.22",
+    "vue-router": "^4.6.3"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.14",
+    "@types/node": "^24.8.1",
+    "@vitejs/plugin-vue": "^6.0.1",
+    "tailwindcss": "^4.1.14",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.9",
+    "vue-tsc": "^3.1.1"
+  },
+  "allowScripts": {
+    "esbuild@0.28.1": true
+  }
+}
