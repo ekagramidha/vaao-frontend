@@ -23,8 +23,14 @@ import { computed, readonly, ref } from 'vue';
  *     switching sub-account navigates, which reloads the iframe with a fresh
  *     merge value. Kept because a phase-2 Marketplace Custom Page passes its
  *     session context this way, and this is the seam it arrives through.
- *  3. `VITE_DEFAULT_LOCATION_ID`, **only when not embedded**, so the app is
- *     usable standalone at localhost:5173 during development.
+ *
+ * There is deliberately no third source. A build-time default would be a
+ * convenience in development and a hazard in production: a merge field that is
+ * missing, mistyped, or renamed by a HighLevel update would stop being an
+ * error and start silently serving whichever sub-account was compiled in.
+ * Someone would be looking at another customer's agents with nothing on screen
+ * saying so. Standalone development supplies the same query parameter the
+ * embed does, so there is one code path rather than two that can diverge.
  *
  * Nothing here is trusted for authorisation. The backend holds the credentials
  * and decides what a location may read; this only says which one to ask about.
@@ -50,29 +56,15 @@ function readFromUrl(): string | null {
 }
 
 const embeddedRef = ref<boolean>(window.self !== window.top);
-
-/**
- * The development default is deliberately not applied when embedded.
- *
- * Inside HighLevel it would be wrong rather than convenient: a mistyped or
- * missing merge field in the menu-link URL would quietly show whichever
- * sub-account happened to be baked into the build, which is worse than showing
- * nothing. Unresolved-and-embedded is a state the UI reports.
- */
-const locationIdRef = ref<string>(
-  readFromUrl() ?? (embeddedRef.value ? '' : (import.meta.env.VITE_DEFAULT_LOCATION_ID ?? '')),
-);
-
+const locationIdRef = ref<string>(readFromUrl() ?? '');
 const companyIdRef = ref<string | null>(null);
 
 export const locationId = readonly(locationIdRef);
 export const isEmbedded = readonly(embeddedRef);
 export const companyId = readonly(companyIdRef);
 
-/** True when we are inside HighLevel but no sub-account could be determined. */
-export const hasUnresolvedLocation = computed(
-  () => embeddedRef.value && locationIdRef.value === '',
-);
+/** No sub-account could be determined, so there is nothing to show. */
+export const hasUnresolvedLocation = computed(() => locationIdRef.value === '');
 
 /** Read directly by the API client, which is not a Vue component. */
 export function currentLocationId(): string {

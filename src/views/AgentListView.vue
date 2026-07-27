@@ -7,7 +7,6 @@ import { Alert, Badge, Card, CardContent, Skeleton } from '@/components/ui';
 import { formatRelative } from '@/lib/format';
 import { useAgentsStore } from '@/stores/agents';
 import { useOptimizerStore } from '@/stores/optimizer';
-import { locationId } from '@/services/embed';
 
 /**
  * Entry point: the sub-account's Voice AI agents.
@@ -40,12 +39,12 @@ async function open(agentId: string): Promise<void> {
       </p>
     </header>
 
-    <Alert v-if="!locationId" variant="destructive">
-      No sub-account was supplied. Open the optimizer from inside HighLevel, or set
-      <code class="font-mono-tight">VITE_DEFAULT_LOCATION_ID</code> for standalone development.
-    </Alert>
-
-    <Alert v-else-if="agentsStore.error" variant="destructive">
+    <!--
+      No "missing sub-account" branch here. AppShell resolves that before the
+      router view renders at all, so a copy of the check in this view would be
+      unreachable and would drift out of step with the one that runs.
+    -->
+    <Alert v-if="agentsStore.error" variant="destructive">
       <div class="flex gap-2">
         <AlertCircle class="mt-0.5 size-4 shrink-0" />
         <p>{{ agentsStore.error }}</p>

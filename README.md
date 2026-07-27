@@ -6,11 +6,11 @@ Vue 3 · Vite · TypeScript · Tailwind v4 · shadcn-style components. Independe
 
 ```bash
 npm install
-cp .env.example .env      # VITE_API_BASE_URL, VITE_DEFAULT_LOCATION_ID
-npm run dev               # http://localhost:5173
+cp .env.example .env      # VITE_API_BASE_URL
+npm run dev               # http://localhost:5173/?locationId=<your-sub-account-id>
 ```
 
-Runs standalone against `VITE_DEFAULT_LOCATION_ID`, so the whole product is usable in a browser tab without HighLevel. Inside the iframe the sub-account id arrives from the loader instead.
+The sub-account always comes from the `locationId` query parameter, standalone and embedded alike. There is no build-time default: inside HighLevel a fallback would turn a missing merge field from a visible error into silently serving whichever sub-account was compiled in, and having one code path means development cannot drift from what production does.
 
 | Script | |
 |---|---|
@@ -65,6 +65,16 @@ Hash history, deliberately. The widget is static files framed from a HighLevel p
 
 ### Embedding
 
-`services/embed.ts` resolves the sub-account from, in order: the `locationId` query parameter (primary — synchronous on first paint), a `postMessage` from the loader (covers a sub-account switch without a reload), then `VITE_DEFAULT_LOCATION_ID` for standalone development. It also reports content height to the parent so the iframe can be sized to fit instead of nesting scrollbars.
+Installed in HighLevel as a **Custom Menu Link** — a native sidebar item pointing at this app, with the sub-account substituted into the URL by a merge field:
+
+```
+https://your-optimizer.example.com/?locationId={{ location.id }}
+```
+
+`services/embed.ts` reads that on first paint. The merge field is what makes a snippet unnecessary: a frame cannot read its parent's URL — that is a cross-origin `SecurityError` — and `document.referrer` arrives origin-only under the default referrer policy, stripping the path segment holding the id. HighLevel resolving it server-side is the only way the value gets in without injecting script into their page.
+
+A `postMessage` context listener remains as the second source. The menu-link install never uses it, since switching sub-account navigates and reloads the frame; it is the seam a phase-2 Marketplace Custom Page would deliver session context through.
+
+There is no third source. If nothing resolves, `AppShell` says so and renders nothing else, rather than firing every request without a location header and producing failures that name the wrong problem.
 
 None of this is trusted for authorisation. It only says which location to ask about; the backend holds the credentials and decides what may be read.
