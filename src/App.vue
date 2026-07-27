@@ -1,34 +1,15 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue';
 import { ConfigProvider } from 'reka-ui';
 import AppShell from '@/layouts/AppShell.vue';
-import { isEmbedded, reportHeight } from '@/services/embed';
 
 /**
  * Root component.
  *
- * Its only responsibility beyond mounting the shell is telling the HighLevel
- * loader how tall our content is. Without that the iframe stays a fixed height
- * and the user gets a scrollbar inside a scrollbar, which is the clearest
- * possible signal that something has been bolted on rather than integrated.
+ * It used to measure its own height and post it to a parent frame, because the
+ * Custom JS loader created the iframe and had to be told how tall to make it.
+ * HighLevel's own Custom Menu Link page owns that iframe and sizes it, so the
+ * measurement had nothing left to talk to.
  */
-const root = ref<HTMLElement | null>(null);
-let observer: ResizeObserver | null = null;
-
-onMounted(() => {
-  if (!isEmbedded.value || !root.value) return;
-
-  observer = new ResizeObserver((entries) => {
-    const height = entries[0]?.target.scrollHeight;
-    if (height) reportHeight(height);
-  });
-  observer.observe(root.value);
-});
-
-onUnmounted(() => {
-  observer?.disconnect();
-  observer = null;
-});
 </script>
 
 <template>
@@ -45,7 +26,7 @@ onUnmounted(() => {
     width; reka still applies `overflow: hidden`, so scroll locking is intact.
   -->
   <ConfigProvider :scroll-body="false">
-    <div ref="root" class="min-h-full">
+    <div class="min-h-full">
       <AppShell>
         <RouterView />
       </AppShell>

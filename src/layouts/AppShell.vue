@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { ChevronDown, RefreshCw, Waves } from 'lucide-vue-next';
+import { AlertCircle, ChevronDown, RefreshCw, Waves } from 'lucide-vue-next';
 import { Badge, Button } from '@/components/ui';
+import { hasUnresolvedLocation } from '@/services/embed';
 import { useAgentsStore } from '@/stores/agents';
 import { useOptimizerStore } from '@/stores/optimizer';
 
@@ -91,7 +92,28 @@ async function resync(): Promise<void> {
     </header>
 
     <main class="mx-auto w-full max-w-7xl flex-1 px-5 py-6">
-      <slot />
+      <!--
+        Embedded, but no sub-account was resolved. Almost always a merge field
+        missing from the Custom Menu Link URL. Rendering the app anyway would
+        fire every request without a location header and show a wall of
+        failures that name the wrong problem, so the cause is stated instead.
+      -->
+      <div
+        v-if="hasUnresolvedLocation"
+        class="mx-auto flex max-w-lg flex-col items-center gap-3 py-16 text-center"
+      >
+        <AlertCircle class="size-8 text-advisory" />
+        <p class="text-sm font-semibold">Could not tell which sub-account this is</p>
+        <p class="text-xs leading-relaxed text-muted-foreground">
+          The optimizer reads the sub-account from a merge field on its menu link. Open
+          <span class="font-medium text-foreground">Settings → Custom Menu Links</span>, edit this
+          link, and make sure its URL ends with
+          <code class="rounded bg-muted px-1 py-0.5 font-mono-tight">?locationId=</code> followed by
+          the location id merge field.
+        </p>
+      </div>
+
+      <slot v-else />
     </main>
   </div>
 </template>

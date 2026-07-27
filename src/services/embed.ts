@@ -1,32 +1,41 @@
-import { readonly, ref } from 'vue';
+import { computed, readonly, ref } from 'vue';
 
 /**
  * Resolves which HighLevel sub-account the widget is acting on.
  *
- * Three sources, in priority order:
+ * The widget is installed as a **Custom Menu Link** in HighLevel's sidebar,
+ * pointing at this app with the sub-account id substituted into the URL by a
+ * merge field:
  *
- *  1. The `locationId` query parameter on the iframe URL. This is the primary
- *     path — the Custom JS loader reads the id out of the HighLevel page and
- *     puts it there, which means it is available synchronously on first paint
- *     and no request has to wait for a handshake.
- *  2. A `postMessage` from the parent frame. Covers the case where HighLevel
- *     switches sub-account without reloading our iframe, and lets the loader
- *     correct an id it worked out late.
- *  3. `VITE_DEFAULT_LOCATION_ID`, so the app is usable standalone at
- *     localhost:5173 during development.
+ *     https://your-optimizer.example.com/?locationId={{ location.id }}
+ *
+ * HighLevel resolves that server-side, so the id is on the query string before
+ * the iframe loads and is available synchronously on first paint. A frame
+ * cannot read its parent's URL — that is a cross-origin `SecurityError`, and
+ * `document.referrer` arrives origin-only under the default referrer policy, so
+ * the path holding the id is stripped. The merge field is what makes this work
+ * without injecting a script into HighLevel's page.
+ *
+ * Sources, in priority order:
+ *
+ *  1. The `locationId` query parameter.
+ *  2. A `postMessage` from the parent frame. Unused by the menu-link install —
+ *     switching sub-account navigates, which reloads the iframe with a fresh
+ *     merge value. Kept because a phase-2 Marketplace Custom Page passes its
+ *     session context this way, and this is the seam it arrives through.
+ *  3. `VITE_DEFAULT_LOCATION_ID`, **only when not embedded**, so the app is
+ *     usable standalone at localhost:5173 during development.
  *
  * Nothing here is trusted for authorisation. The backend holds the credentials
  * and decides what a location may read; this only says which one to ask about.
  */
 
-/** Messages exchanged with the Custom JS loader. */
+/** Messages exchanged with a parent frame. */
 export const EMBED_MESSAGE = {
-  /** Loader → widget: here is the current context. */
+  /** Parent → widget: here is the current context. */
   context: 'ghl-optimizer:context',
-  /** Widget → loader: I am mounted, send me the context. */
+  /** Widget → parent: I am mounted, send me the context. */
   ready: 'ghl-optimizer:ready',
-  /** Widget → loader: my content is this tall, resize the iframe. */
-  resize: 'ghl-optimizer:resize',
 } as const;
 
 interface EmbedContextMessage {
@@ -37,19 +46,33 @@ interface EmbedContextMessage {
 }
 
 function readFromUrl(): string | null {
-  const params = new URLSearchParams(window.location.search);
-  return params.get('locationId');
+  return new URLSearchParams(window.location.search).get('locationId');
 }
 
-const locationIdRef = ref<string>(
-  readFromUrl() ?? import.meta.env.VITE_DEFAULT_LOCATION_ID ?? '',
-);
 const embeddedRef = ref<boolean>(window.self !== window.top);
+
+/**
+ * The development default is deliberately not applied when embedded.
+ *
+ * Inside HighLevel it would be wrong rather than convenient: a mistyped or
+ * missing merge field in the menu-link URL would quietly show whichever
+ * sub-account happened to be baked into the build, which is worse than showing
+ * nothing. Unresolved-and-embedded is a state the UI reports.
+ */
+const locationIdRef = ref<string>(
+  readFromUrl() ?? (embeddedRef.value ? '' : (import.meta.env.VITE_DEFAULT_LOCATION_ID ?? '')),
+);
+
 const companyIdRef = ref<string | null>(null);
 
 export const locationId = readonly(locationIdRef);
 export const isEmbedded = readonly(embeddedRef);
 export const companyId = readonly(companyIdRef);
+
+/** True when we are inside HighLevel but no sub-account could be determined. */
+export const hasUnresolvedLocation = computed(
+  () => embeddedRef.value && locationIdRef.value === '',
+);
 
 /** Read directly by the API client, which is not a Vue component. */
 export function currentLocationId(): string {
@@ -61,13 +84,16 @@ export function setLocationId(value: string): void {
 }
 
 /**
- * Starts the handshake with the parent frame.
+ * Announces the widget to a parent frame and accepts context back.
  *
- * Called once from `main.ts`. The origin of incoming messages is not
- * restricted to a single host because an agency can serve HighLevel from a
- * white-label domain, and the payload is only a sub-account id — never a
- * credential — so a spoofed message can at worst point the widget at a
- * location the backend will refuse to serve.
+ * A no-op in the menu-link install, where nothing is listening and the query
+ * parameter has already answered the question. This exists for the Marketplace
+ * Custom Page path, where the host replies to the ready message.
+ *
+ * The origin of incoming messages is not restricted to a single host because an
+ * agency can serve HighLevel from a white-label domain, and the payload is only
+ * a sub-account id — never a credential — so a spoofed message can at worst
+ * point the widget at a location the backend will refuse to serve.
  */
 export function initEmbedBridge(): void {
   if (!embeddedRef.value) return;
@@ -81,13 +107,4 @@ export function initEmbedBridge(): void {
   });
 
   window.parent.postMessage({ type: EMBED_MESSAGE.ready }, '*');
-}
-
-/**
- * Tells the parent how tall our content is, so the loader can size the iframe
- * to fit instead of leaving a scrollbar inside a scrollbar.
- */
-export function reportHeight(height: number): void {
-  if (!embeddedRef.value) return;
-  window.parent.postMessage({ type: EMBED_MESSAGE.resize, height }, '*');
 }
