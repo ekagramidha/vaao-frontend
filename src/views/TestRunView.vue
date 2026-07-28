@@ -26,6 +26,9 @@ const router = useRouter();
 const run = computed(() => optimizerStore.selectedRun);
 const results = computed(() => optimizerStore.selectedRunResults);
 const comparison = computed(() => optimizerStore.comparisonRun);
+const testCasesById = computed(
+  () => new Map(optimizerStore.testCases.map((testCase) => [testCase.id, testCase])),
+);
 
 const scoreDelta = computed(() => {
   if (!run.value || !comparison.value) return null;
@@ -40,11 +43,18 @@ const changed = computed(() =>
   }),
 );
 
-onMounted(() => optimizerStore.loadRun(props.testRunId));
+async function load(): Promise<void> {
+  await Promise.all([
+    optimizerStore.loadRun(props.testRunId),
+    optimizerStore.loadTestCases(props.agentId),
+  ]);
+}
+
+onMounted(load);
 
 watch(
-  () => props.testRunId,
-  (testRunId) => optimizerStore.loadRun(testRunId),
+  () => [props.agentId, props.testRunId],
+  load,
 );
 </script>
 
@@ -125,6 +135,12 @@ watch(
           :key="result.id"
           :result="result"
           :previous-score="optimizerStore.comparisonScores.get(result.testCaseId) ?? null"
+          :test-case="testCasesById.get(result.testCaseId) ?? null"
+          :busy="optimizerStore.busy === result.testCaseId"
+          @record-manual="
+            (testCaseId, verdict, note) => optimizerStore.recordManualRun(testCaseId, verdict, note)
+          "
+          @clear-manual="(testCaseId) => optimizerStore.clearManualRun(testCaseId)"
         />
       </div>
     </template>

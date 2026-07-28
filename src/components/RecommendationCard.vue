@@ -70,6 +70,11 @@ const isTextChange = computed(() => {
   return typeof before === 'string' && typeof after === 'string' && before.length > 200;
 });
 
+const hasVisibleBeforeAfter = computed(() => {
+  const { before, after } = props.recommendation.change;
+  return !(before === null || before === undefined) || !(after === null || after === undefined);
+});
+
 function render(value: unknown): string {
   if (value === null || value === undefined) return 'not set';
   if (typeof value === 'string') return value || '(empty)';
@@ -198,10 +203,10 @@ const statusVariant = computed(() => {
         </div>
       </div>
 
-      <Separator />
+      <Separator v-if="hasVisibleBeforeAfter" />
 
       <!-- Before vs after -->
-      <div class="space-y-2">
+      <div v-if="hasVisibleBeforeAfter" class="space-y-2">
         <div class="flex items-center gap-2 text-[11px] tracking-wide uppercase text-muted-foreground">
           <span>Before vs after</span>
           <span class="rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium normal-case">

@@ -21,7 +21,6 @@ import PromptDiff from '@/components/PromptDiff.vue';
 import RecommendationCard from '@/components/RecommendationCard.vue';
 import RegressionSummary from '@/components/RegressionSummary.vue';
 import ScoreStat from '@/components/ScoreStat.vue';
-import SimulationNotice from '@/components/SimulationNotice.vue';
 import TestCaseCard from '@/components/TestCaseCard.vue';
 import TranscriptViewer from '@/components/TranscriptViewer.vue';
 import VersionTimeline from '@/components/VersionTimeline.vue';
@@ -581,6 +580,7 @@ async function runSuite(): Promise<void> {
             label="Transcript score (real calls)"
             :value="overview.analysis?.score ?? null"
             tone
+            tooltip="Quality score from the latest analysis of real Voice AI call transcripts. It reflects how well the live agent handled actual conversations."
             :hint="
               overview.analysis
                 ? `${pluralise(overview.calls.total, 'call')} analysed`
@@ -590,6 +590,7 @@ async function runSuite(): Promise<void> {
           <ScoreStat
             label="Open issues"
             :value="overview.issues.open"
+            tooltip="Unresolved problems found in transcript analysis, such as missed instructions, weak responses, or behavior that needs prompt changes."
             :hint="
               overview.issues.bySeverity.critical + overview.issues.bySeverity.high > 0
                 ? `${overview.issues.bySeverity.critical} critical · ${overview.issues.bySeverity.high} high`
@@ -606,6 +607,7 @@ async function runSuite(): Promise<void> {
             :value="overview.testing.latestRun?.score ?? null"
             tone
             :delta="overview.testing.scoreDelta"
+            tooltip="Score from the latest generated test-suite run. These are simulated conversations designed to check known edge cases, not real customer calls."
             :hint="
               overview.testing.latestRun
                 ? `${overview.testing.latestRun.passed}/${overview.testing.activeCases} passing`
@@ -615,6 +617,7 @@ async function runSuite(): Promise<void> {
           <ScoreStat
             label="Recommendations"
             :value="overview.recommendations.proposed"
+            tooltip="Pending optimizer suggestions for improving the agent. One-click recommendations can be applied automatically; manual ones need review and editing."
             :hint="`${overview.recommendations.applicable} one-click · ${overview.recommendations.advisory} manual`"
           />
         </div>
@@ -804,19 +807,12 @@ async function runSuite(): Promise<void> {
             </Button>
           </div>
 
-          <!-- Stated before the suite is run, not only on the results screen -->
-          <SimulationNotice explain-delta />
-
           <TestCaseCard
             v-for="testCase in optimizerStore.testCases"
             :key="testCase.id"
             :test-case="testCase"
             :busy="optimizerStore.busy === testCase.id"
             @archive="optimizerStore.archiveTestCase(props.agentId, testCase.id)"
-            @record-manual="
-              (target, verdict, note) => optimizerStore.recordManualRun(target.id, verdict, note)
-            "
-            @clear-manual="(target) => optimizerStore.clearManualRun(target.id)"
           />
         </template>
       </TabsContent>

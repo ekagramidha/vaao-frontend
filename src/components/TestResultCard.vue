@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
-import { Check, MessageSquare, X } from 'lucide-vue-next';
+import { Check, MessageSquare, Phone, ThumbsDown, ThumbsUp, X } from 'lucide-vue-next';
 import SimulationNotice from '@/components/SimulationNotice.vue';
 import TranscriptViewer from '@/components/TranscriptViewer.vue';
 import { Badge, Button, Card, CardContent, Dialog } from '@/components/ui';
-import { scoreTone } from '@/lib/format';
+import { formatRelative, scoreTone } from '@/lib/format';
 import { resultStatusLabel, slugLabel } from '@/lib/labels';
 import { cn } from '@/lib/utils';
-import type { TestResult } from '@/types/api';
+import type { TestCase, TestResult } from '@/types/api';
 
 /**
  * The verdict for one test case, with the conversation that produced it.
@@ -21,10 +21,19 @@ const props = defineProps<{
   result: TestResult;
   /** Score for the same case in the comparison run, when there is one. */
   previousScore?: number | null;
+  /** Full case details, used as the script for a real-agent check. */
+  testCase?: TestCase | null;
+  busy?: boolean;
+}>();
+
+const emit = defineEmits<{
+  'record-manual': [testCaseId: string, verdict: 'passed' | 'failed', note: string];
+  'clear-manual': [testCaseId: string];
 }>();
 
 const showTranscript = ref(false);
 const highlightTurn = ref<number | null>(null);
+const note = ref('');
 
 const toneClass = computed(
   () =>
@@ -47,6 +56,11 @@ const delta = computed(() => {
 function openTranscript(turnIndex?: number): void {
   highlightTurn.value = turnIndex ?? null;
   showTranscript.value = true;
+}
+
+function record(verdict: 'passed' | 'failed'): void {
+  emit('record-manual', props.result.testCaseId, verdict, note.value.trim());
+  note.value = '';
 }
 </script>
 
@@ -142,6 +156,71 @@ function openTranscript(turnIndex?: number): void {
         <MessageSquare />
         View simulated call ({{ props.result.simulatedTurns.length }} turns)
       </Button>
+
+      <!--
+        Run it for real.
+
+        This sits beside the simulated verdict because that is when a reviewer
+        can decide whether the failure matters enough to test on HighLevel's
+        real runtime.
+      -->
+      <div v-if="props.testCase" class="rounded-md border border-dashed px-3 py-2.5">
+        <div class="mb-1.5 flex items-center gap-1.5 text-[11px] tracking-wide uppercase text-muted-foreground">
+          <Phone class="size-3" />
+          Try it on the real agent
+        </div>
+
+        <template v-if="props.testCase.manualRun">
+          <p class="text-xs">
+            <span
+              class="font-medium"
+              :class="props.testCase.manualRun.verdict === 'passed' ? 'text-pass' : 'text-fail'"
+            >
+              {{ props.testCase.manualRun.verdict === 'passed' ? 'Passed' : 'Failed' }}
+            </span>
+            <span class="text-muted-foreground">
+              on a real call, {{ formatRelative(props.testCase.manualRun.recordedAt) }}
+            </span>
+          </p>
+          <p v-if="props.testCase.manualRun.note" class="mt-1 text-xs text-muted-foreground">
+            “{{ props.testCase.manualRun.note }}”
+          </p>
+          <Button
+            variant="ghost"
+            size="sm"
+            class="mt-1.5 -ml-2"
+            :disabled="props.busy"
+            @click="emit('clear-manual', props.result.testCaseId)"
+          >
+            <X />
+            Clear
+          </Button>
+        </template>
+
+        <template v-else>
+          <p class="text-xs text-muted-foreground">
+            Phone the agent and run this scenario. Record what happened — this verdict comes from
+            the live platform, not the simulation.
+          </p>
+          <input
+            v-model="note"
+            type="text"
+            placeholder="What happened? (optional)"
+            class="mt-2 w-full rounded-md border bg-background px-2.5 py-1.5 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            @keyup.enter="record('passed')"
+          />
+          <div class="mt-2 flex items-center gap-2">
+            <Button variant="outline" size="sm" :disabled="props.busy" @click="record('passed')">
+              <ThumbsUp />
+              It passed
+            </Button>
+            <Button variant="outline" size="sm" :disabled="props.busy" @click="record('failed')">
+              <ThumbsDown />
+              It failed
+            </Button>
+          </div>
+        </template>
+      </div>
     </CardContent>
   </Card>
 
