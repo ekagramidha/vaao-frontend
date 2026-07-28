@@ -44,10 +44,10 @@ export const api = {
 
   /* Loop 1 — analyse past performance ------------------------------------ */
 
-  startAnalysis: (agentId: string, callLimit?: number) =>
+  startAnalysis: (agentId: string, callLimit: number = 25) =>
     request<Job>(`/agents/${agentId}/analyses`, {
       method: 'POST',
-      body: callLimit ? { callLimit } : {},
+      body: { callLimit },
     }),
   listAnalyses: (agentId: string) => request<Analysis[]>(`/agents/${agentId}/analyses`),
   getAnalysis: (analysisId: string) =>

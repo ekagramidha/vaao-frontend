@@ -71,6 +71,11 @@ const agent = computed(
 );
 const overview = computed(() => agentsStore.overview);
 
+const noTranscripts = computed(() => {
+  if (!overview.value) return false;
+  return (overview.value.calls.total ?? 0) === 0;
+});
+
 /* Job runners — one per loop, each refreshing exactly what it produced ------ */
 
 const analysisJob = useJobRunner({
@@ -707,10 +712,11 @@ async function runSuite(): Promise<void> {
         >
           <Button
             size="sm"
+            :disabled="noTranscripts"
             :loading="analysisJob.isRunning.value"
             @click="analysisJob.start(() => api.startAnalysis(props.agentId))"
           >
-            Analyse transcripts
+            {{ noTranscripts ? 'No transcripts yet' : 'Analyse transcripts' }}
           </Button>
         </EmptyState>
 

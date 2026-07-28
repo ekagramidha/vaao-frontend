@@ -1,40 +1,22 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
-import { AlertCircle, ChevronDown, RefreshCw, AudioLines } from 'lucide-vue-next';
+import { useRoute } from 'vue-router';
+import { AlertCircle, RefreshCw, AudioLines } from 'lucide-vue-next';
 import { Badge, Button } from '@/components/ui';
 import { hasUnresolvedLocation, isEmbedded } from '@/services/embed';
 import { useAgentsStore } from '@/stores/agents';
-import { useOptimizerStore } from '@/stores/optimizer';
 
 /**
- * Persistent chrome: product mark, agent switcher, data-source indicator.
+ * Persistent chrome: product mark and data-source indicator.
  *
  * Kept intentionally low-contrast and short. The widget sits inside HighLevel's
  * own navigation, so a second heavy header would compete with theirs.
  */
 const agentsStore = useAgentsStore();
-const optimizerStore = useOptimizerStore();
 const route = useRoute();
-const router = useRouter();
 
 const currentAgentId = computed(() => route.params.agentId as string | undefined);
 const requiresLocation = computed(() => route.meta.requiresLocation !== false);
-
-const currentAgentName = computed(() => {
-  const id = currentAgentId.value;
-  if (!id) return null;
-  return agentsStore.agents.find((agent) => agent.ghlAgentId === id)?.agentName ?? null;
-});
-
-async function switchAgent(event: Event): Promise<void> {
-  const agentId = (event.target as HTMLSelectElement).value;
-  if (!agentId || agentId === currentAgentId.value) return;
-
-  optimizerStore.clear();
-  agentsStore.selectAgent(agentId);
-  await router.push({ name: 'agent', params: { agentId } });
-}
 
 async function resync(): Promise<void> {
   await agentsStore.resync();
@@ -50,26 +32,6 @@ async function resync(): Promise<void> {
           <AudioLines class="size-4" />
           Voice AI Agent Optimizer
         </RouterLink>
-
-        <div v-if="currentAgentId" class="relative ml-3 min-w-0">
-          <select
-            class="h-8 max-w-[16rem] appearance-none truncate rounded-md border bg-background pr-8 pl-3 text-xs font-medium outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40"
-            :value="currentAgentId"
-            :aria-label="`Current agent: ${currentAgentName ?? 'unknown'}`"
-            @change="switchAgent"
-          >
-            <option
-              v-for="agent in agentsStore.agents"
-              :key="agent.ghlAgentId"
-              :value="agent.ghlAgentId"
-            >
-              {{ agent.agentName }}
-            </option>
-          </select>
-          <ChevronDown
-            class="pointer-events-none absolute top-1/2 right-2.5 size-3.5 -translate-y-1/2 text-muted-foreground"
-          />
-        </div>
 
         <div class="ml-auto flex items-center gap-2">
           <!--
