@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { AlertCircle, ChevronDown, RefreshCw, Waves } from 'lucide-vue-next';
+import { AlertCircle, ChevronDown, RefreshCw, AudioLines } from 'lucide-vue-next';
 import { Badge, Button } from '@/components/ui';
 import { hasUnresolvedLocation, isEmbedded } from '@/services/embed';
 import { useAgentsStore } from '@/stores/agents';
@@ -19,6 +19,7 @@ const route = useRoute();
 const router = useRouter();
 
 const currentAgentId = computed(() => route.params.agentId as string | undefined);
+const requiresLocation = computed(() => route.meta.requiresLocation !== false);
 
 const currentAgentName = computed(() => {
   const id = currentAgentId.value;
@@ -46,8 +47,8 @@ async function resync(): Promise<void> {
     <header class="sticky top-0 z-40 border-b bg-background/85 backdrop-blur">
       <div class="mx-auto flex h-14 w-full max-w-7xl items-center gap-3 px-5">
         <RouterLink to="/" class="flex items-center gap-2 text-sm font-semibold tracking-tight">
-          <Waves class="size-4" />
-          Agent Optimizer
+          <AudioLines class="size-4" />
+          Voice AI Agent Optimizer
         </RouterLink>
 
         <div v-if="currentAgentId" class="relative ml-3 min-w-0">
@@ -75,10 +76,15 @@ async function resync(): Promise<void> {
             Whether the data on screen came from HighLevel or the local mirror.
             Worth surfacing: "why is this stale" is almost always this.
           -->
-          <Badge v-if="agentsStore.source" variant="outline" class="hidden sm:inline-flex">
+          <Badge
+            v-if="requiresLocation && agentsStore.source"
+            variant="outline"
+            class="hidden sm:inline-flex"
+          >
             {{ agentsStore.source === 'ghl' ? 'Live from HighLevel' : 'Cached' }}
           </Badge>
           <Button
+            v-if="requiresLocation"
             variant="ghost"
             size="sm"
             :loading="agentsStore.isLoadingAgents"
@@ -100,7 +106,7 @@ async function resync(): Promise<void> {
         failures naming the wrong problem, so the cause is stated instead.
       -->
       <div
-        v-if="hasUnresolvedLocation"
+        v-if="requiresLocation && hasUnresolvedLocation"
         class="mx-auto flex max-w-lg flex-col items-center gap-3 py-16 text-center"
       >
         <AlertCircle class="size-8 text-advisory" />

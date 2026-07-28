@@ -546,7 +546,7 @@ async function runSuite(): Promise<void> {
           <Badge variant="outline">v{{ agent.currentVersion }}</Badge>
           <Badge variant="outline">{{ pluralise(agent.actions.length, 'action') }}</Badge>
         </div>
-        <p v-if="overview?.analysis?.goalStatement" class="max-w-3xl text-xs text-muted-foreground">
+        <p v-if="overview?.analysis?.goalStatement" class="text-xs text-muted-foreground">
           <span class="font-medium text-foreground">Goal (inferred from its own prompt):</span>
           {{ overview.analysis.goalStatement }}
         </p>

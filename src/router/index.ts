@@ -15,6 +15,18 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/AgentListView.vue'),
   },
   {
+    path: '/install/success',
+    name: 'install-success',
+    component: () => import('@/views/InstallSuccessView.vue'),
+    meta: { requiresLocation: false },
+  },
+  {
+    path: '/install/failure',
+    name: 'install-failure',
+    component: () => import('@/views/InstallFailureView.vue'),
+    meta: { requiresLocation: false },
+  },
+  {
     path: '/agents/:agentId',
     name: 'agent',
     component: () => import('@/views/AgentWorkspaceView.vue'),

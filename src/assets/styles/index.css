@@ -161,6 +161,7 @@
   body,
   #app {
     height: 100%;
+    font-size: large;
   }
 
   /*
