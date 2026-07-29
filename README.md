@@ -16,6 +16,7 @@ The sub-account always comes from the `locationId` query parameter, standalone a
 |---|---|
 | `npm run dev` | Vite dev server |
 | `npm run build` | `vue-tsc --build` then `vite build` — types are part of the build, not optional |
+| `npm run preview` | Serve the production build locally with Vite |
 | `npm run typecheck` | `vue-tsc --noEmit` |
 
 ## Layout
@@ -27,7 +28,7 @@ src/
 ├── components/               domain components (IssueCard, RecommendationCard, PromptDiff, …)
 ├── composables/              useJobRunner — 202 → poll → refresh
 ├── layouts/AppShell.vue      header, agent switcher, data-source badge
-├── views/                    AgentList · AgentWorkspace · TestRun
+├── views/                    AgentList · AgentWorkspace · TestRun · install success/failure
 ├── router/                   hash history
 ├── stores/                   pinia: agents, optimizer
 ├── services/                 api client + endpoints, embed bridge
@@ -74,6 +75,8 @@ https://your-optimizer.example.com/?locationId={{ location.id }}
 `services/embed.ts` reads that on first paint. The merge field is what makes a snippet unnecessary: a frame cannot read its parent's URL — that is a cross-origin `SecurityError` — and `document.referrer` arrives origin-only under the default referrer policy, stripping the path segment holding the id. HighLevel resolving it server-side is the only way the value gets in without injecting script into their page.
 
 A `postMessage` context listener remains as the second source. The menu-link install never uses it, since switching sub-account navigates and reloads the frame; it is the seam a phase-2 Marketplace Custom Page would deliver session context through.
+
+The install success/failure routes are deliberately tiny hash routes. They give the backend somewhere human-readable to redirect after a Marketplace OAuth callback without requiring server rewrite rules from the static frontend host.
 
 There is no third source. If nothing resolves, `AppShell` says so and renders nothing else, rather than firing every request without a location header and producing failures that name the wrong problem.
 
