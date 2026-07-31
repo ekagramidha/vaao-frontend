@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import {
+  TooltipArrow,
   TooltipContent as RekaTooltipContent,
   TooltipPortal,
   type TooltipContentEmits,
@@ -15,7 +16,7 @@ defineOptions({
 
 const props = withDefaults(
   defineProps<TooltipContentProps & { class?: string }>(),
-  { sideOffset: 4 },
+  { side: 'top', sideOffset: 8 },
 );
 const emits = defineEmits<TooltipContentEmits>();
 
@@ -34,11 +35,13 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits);
       :class="
         cn(
           'z-50 max-w-xs overflow-hidden rounded-md border bg-popover px-3 py-1.5 text-xs leading-relaxed text-popover-foreground shadow-md',
+          'border-black bg-black text-white shadow-lg',
           props.class,
         )
       "
     >
       <slot />
+      <TooltipArrow class="fill-black" :width="10" :height="5" />
     </RekaTooltipContent>
   </TooltipPortal>
 </template>

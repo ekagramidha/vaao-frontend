@@ -5,6 +5,7 @@ import {
   AlertCircle,
   ChevronLeft,
   ClipboardList,
+  ExternalLink,
   FlaskConical,
   History,
   Lightbulb,
@@ -40,6 +41,7 @@ import { useJobRunner } from '@/composables/useJobRunner';
 import { formatDuration, formatRelative, pluralise } from '@/lib/format';
 import { recommendationStatusLabel } from '@/lib/labels';
 import { api } from '@/services/api';
+import { locationId } from '@/services/embed';
 import { useAgentsStore } from '@/stores/agents';
 import { useOptimizerStore } from '@/stores/optimizer';
 import type { ApplyResult, Call, Recommendation, RecommendationStatus } from '@/types/api';
@@ -218,6 +220,16 @@ const optimizeStatus = computed(() => {
   if (hasAnalysis.value || hasTestCases.value) return 'Ready to refresh recommendations';
   return `${pluralise(overview.value?.calls.total ?? 0, 'transcript')} available`;
 });
+
+const testAgentUrl = computed(() => {
+  const encodedLocationId = encodeURIComponent(locationId.value);
+  const encodedAgentId = encodeURIComponent(props.agentId);
+  return `https://app.gohighlevel.com/v2/location/${encodedLocationId}/ai-agents/voice-ai/builder/${encodedAgentId}`;
+});
+
+function openTestAgent(): void {
+  window.open(testAgentUrl.value, '_blank', 'noopener,noreferrer');
+}
 
 function issuesFor(recommendation: Recommendation) {
   return recommendation.linkedIssueIds
@@ -471,33 +483,45 @@ async function revertRecommendation(recommendation: Recommendation): Promise<voi
 
     <!-- Tabs ------------------------------------------------------------ -->
     <Tabs v-model="activeTab">
-      <TabsList>
-        <TabsTrigger value="recommendations">
-          <Lightbulb class="size-3.5" />
-          Recommendations
-          <Badge v-if="pendingRecommendations.length" variant="secondary">
-            {{ pendingRecommendations.length }}
-          </Badge>
-        </TabsTrigger>
-        <TabsTrigger value="performance">
-          <ClipboardList class="size-3.5" />
-          Evidence
-          <Badge v-if="optimizerStore.openIssues.length" variant="secondary">
-            {{ optimizerStore.openIssues.length }}
-          </Badge>
-        </TabsTrigger>
-        <TabsTrigger value="tests">
-          <FlaskConical class="size-3.5" />
-          Test cases
-          <Badge v-if="optimizerStore.testCases.length" variant="secondary">
-            {{ optimizerStore.testCases.length }}
-          </Badge>
-        </TabsTrigger>
-        <TabsTrigger value="history">
-          <History class="size-3.5" />
-          History
-        </TabsTrigger>
-      </TabsList>
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <TabsList>
+          <TabsTrigger value="recommendations">
+            <Lightbulb class="size-3.5" />
+            Recommendations
+            <Badge v-if="pendingRecommendations.length" variant="secondary">
+              {{ pendingRecommendations.length }}
+            </Badge>
+          </TabsTrigger>
+          <TabsTrigger value="performance">
+            <ClipboardList class="size-3.5" />
+            Evidence
+            <Badge v-if="optimizerStore.openIssues.length" variant="secondary">
+              {{ optimizerStore.openIssues.length }}
+            </Badge>
+          </TabsTrigger>
+          <TabsTrigger value="tests">
+            <FlaskConical class="size-3.5" />
+            Test cases
+            <Badge v-if="optimizerStore.testCases.length" variant="secondary">
+              {{ optimizerStore.testCases.length }}
+            </Badge>
+          </TabsTrigger>
+          <TabsTrigger value="history">
+            <History class="size-3.5" />
+            History
+          </TabsTrigger>
+        </TabsList>
+
+        <Button
+          size="sm"
+          variant="outline"
+          :disabled="!locationId"
+          @click="openTestAgent"
+        >
+          <ExternalLink />
+          Test agent
+        </Button>
+      </div>
 
       <!-- Recommendations -->
       <TabsContent value="recommendations" class="space-y-3">
