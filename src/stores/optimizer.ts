@@ -10,8 +10,6 @@ import type {
   Recommendation,
   RollbackResult,
   TestCase,
-  TestResult,
-  TestRun,
 } from '@/types/api';
 
 /**
@@ -31,11 +29,6 @@ export const useOptimizerStore = defineStore('optimizer', () => {
 
   /* Loop 2 */
   const testCases = ref<TestCase[]>([]);
-  const testRuns = ref<TestRun[]>([]);
-  const selectedRun = ref<TestRun | null>(null);
-  const selectedRunResults = ref<TestResult[]>([]);
-  const comparisonRun = ref<TestRun | null>(null);
-  const comparisonScores = ref<Map<string, number>>(new Map());
 
   /* Loop 3 */
   const recommendations = ref<Recommendation[]>([]);
@@ -51,7 +44,7 @@ export const useOptimizerStore = defineStore('optimizer', () => {
   const openIssues = computed(() => issues.value.filter((issue) => issue.status === 'open'));
 
   const proposedRecommendations = computed(() =>
-    recommendations.value.filter((item) => item.status === 'proposed'),
+    recommendations.value.filter((item) => item.status === 'proposed' && item.confidence > 0.8),
   );
 
   const appliedRecommendations = computed(() =>
@@ -81,7 +74,7 @@ export const useOptimizerStore = defineStore('optimizer', () => {
 
   async function loadIssues(agentId: string): Promise<void> {
     try {
-      const { data } = await api.listIssues(agentId);
+      const { data } = await api.listIssues(agentId, 'open');
       issues.value = data;
     } catch (caught) {
       capture(caught, 'Could not load issues.');
@@ -117,30 +110,6 @@ export const useOptimizerStore = defineStore('optimizer', () => {
     }
   }
 
-  async function loadTestRuns(agentId: string): Promise<void> {
-    try {
-      const { data } = await api.listTestRuns(agentId);
-      testRuns.value = data;
-    } catch (caught) {
-      capture(caught, 'Could not load test runs.');
-    }
-  }
-
-  /** Loads one run plus the run it is measured against, for the delta view. */
-  async function loadRun(testRunId: string): Promise<void> {
-    try {
-      const { data } = await api.getTestRun(testRunId);
-      selectedRun.value = data.run;
-      selectedRunResults.value = data.results;
-      comparisonRun.value = data.comparison;
-      comparisonScores.value = new Map(
-        data.comparisonResults.map((result) => [result.testCaseId, result.score]),
-      );
-    } catch (caught) {
-      capture(caught, 'Could not load the test run.');
-    }
-  }
-
   async function loadRecommendations(agentId: string): Promise<void> {
     try {
       const { data } = await api.listRecommendations(agentId);
@@ -166,7 +135,6 @@ export const useOptimizerStore = defineStore('optimizer', () => {
       loadAnalyses(agentId).then(loadComparison),
       loadIssues(agentId),
       loadTestCases(agentId),
-      loadTestRuns(agentId),
       loadRecommendations(agentId),
       loadCalls(agentId),
     ]);
@@ -177,13 +145,8 @@ export const useOptimizerStore = defineStore('optimizer', () => {
     issues.value = [];
     comparison.value = null;
     testCases.value = [];
-    testRuns.value = [];
     recommendations.value = [];
     calls.value = [];
-    selectedRun.value = null;
-    selectedRunResults.value = [];
-    comparisonRun.value = null;
-    comparisonScores.value = new Map();
     error.value = null;
   }
 
@@ -351,11 +314,6 @@ export const useOptimizerStore = defineStore('optimizer', () => {
     issues,
     comparison,
     testCases,
-    testRuns,
-    selectedRun,
-    selectedRunResults,
-    comparisonRun,
-    comparisonScores,
     recommendations,
     calls,
     error,
@@ -369,8 +327,6 @@ export const useOptimizerStore = defineStore('optimizer', () => {
     loadComparison,
     loadIssues,
     loadTestCases,
-    loadTestRuns,
-    loadRun,
     loadRecommendations,
     loadCalls,
     loadAll,

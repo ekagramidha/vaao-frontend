@@ -8,15 +8,13 @@ import {
   FlaskConical,
   History,
   Lightbulb,
-  ListChecks,
-  PlayCircle,
   Sparkles,
+  Wand2,
   Waves,
 } from 'lucide-vue-next';
 import EmptyState from '@/components/EmptyState.vue';
 import IssueCard from '@/components/IssueCard.vue';
 import JobProgress from '@/components/JobProgress.vue';
-import LoopStepper, { type LoopStep, type StepState } from '@/components/LoopStepper.vue';
 import PromptDiff from '@/components/PromptDiff.vue';
 import RecommendationCard from '@/components/RecommendationCard.vue';
 import RegressionSummary from '@/components/RegressionSummary.vue';
@@ -32,7 +30,6 @@ import {
   CardContent,
   CollapsibleSection,
   Dialog,
-  Separator,
   Skeleton,
   Tabs,
   TabsContent,
@@ -41,7 +38,7 @@ import {
 } from '@/components/ui';
 import { useJobRunner } from '@/composables/useJobRunner';
 import { formatDuration, formatRelative, pluralise } from '@/lib/format';
-import { recommendationStatusLabel, runPurposeLabel, titleCase } from '@/lib/labels';
+import { recommendationStatusLabel } from '@/lib/labels';
 import { api } from '@/services/api';
 import { useAgentsStore } from '@/stores/agents';
 import { useOptimizerStore } from '@/stores/optimizer';
@@ -61,7 +58,7 @@ const agentsStore = useAgentsStore();
 const optimizerStore = useOptimizerStore();
 const router = useRouter();
 
-const activeTab = ref('performance');
+const activeTab = ref('recommendations');
 const openCall = ref<Call | null>(null);
 const notice = ref<string | null>(null);
 
@@ -75,7 +72,7 @@ const noTranscripts = computed(() => {
   return (overview.value.calls.total ?? 0) === 0;
 });
 
-/* Job runners — one per loop, each refreshing exactly what it produced ------ */
+/* Job runners — the single Optimize action drives these in sequence ---------- */
 
 const analysisJob = useJobRunner({
   onSuccess: async () => {
@@ -86,7 +83,7 @@ const analysisJob = useJobRunner({
       optimizerStore.loadIssues(props.agentId),
       agentsStore.loadOverview(props.agentId),
     ]);
-    notice.value = 'Analysis complete. Review the issues, then generate a test suite.';
+    notice.value = null;
   },
 });
 
@@ -96,23 +93,7 @@ const testGenJob = useJobRunner({
       optimizerStore.loadTestCases(props.agentId),
       agentsStore.loadOverview(props.agentId),
     ]);
-    activeTab.value = 'tests';
-    notice.value = 'Test suite generated. Run it to score the agent as it is configured today.';
-  },
-});
-
-const testRunJob = useJobRunner({
-  onSuccess: async (job) => {
-    await Promise.all([
-      optimizerStore.loadTestRuns(props.agentId),
-      agentsStore.loadOverview(props.agentId),
-    ]);
-    if (job.result?.kind === 'testRun') {
-      await router.push({
-        name: 'test-run',
-        params: { agentId: props.agentId, testRunId: job.result.id },
-      });
-    }
+    notice.value = null;
   },
 });
 
@@ -136,7 +117,6 @@ const recommendJob = useJobRunner({
 const jobRunners = [
   { key: 'analysis', runner: analysisJob },
   { key: 'test-generation', runner: testGenJob },
-  { key: 'test-run', runner: testRunJob },
   { key: 'recommendations', runner: recommendJob },
 ] as const;
 
@@ -144,186 +124,21 @@ const anyJobRunning = computed(() =>
   jobRunners.some(({ runner }) => runner.isRunning.value),
 );
 
-/* The loop stepper ---------------------------------------------------------
- *
- * Each step reports whether it has been run and whether that result is still
- * valid. Staleness is derived entirely from data the API already returns, and
- * the version comparison on the test run is the one that matters most: after an
- * apply, the last score describes the configuration that was replaced.
- */
-
 const timeOf = (value: string | null | undefined): number =>
   value ? new Date(value).getTime() : 0;
 
-/** True when transcripts arrived, or the config changed, after the analysis ran. */
-const analysisStale = computed(() => {
-  const analysis = optimizerStore.latestAnalysis;
-  if (!analysis) return false;
-  if (agent.value && analysis.agentVersion !== agent.value.currentVersion) return true;
-  return timeOf(overview.value?.calls.latestAt) > timeOf(analysis.completedAt);
-});
-
-/** True when the suite predates the newest analysis, so it misses its findings. */
-const testCasesStale = computed(() => {
-  const analysis = optimizerStore.latestAnalysis;
-  if (!analysis || optimizerStore.testCases.length === 0) return false;
-  return optimizerStore.testCases.every((testCase) => testCase.sourceAnalysisId !== analysis.id);
-});
-
-/**
- * True when the last run scored a configuration that is no longer live, or when
- * cases have been added since it ran.
- */
-const runStale = computed(() => {
-  const run = latestRun.value;
-  if (!run) return false;
-  if (agent.value && run.agentVersion !== agent.value.currentVersion) return true;
-  return optimizerStore.testCases.some(
-    (testCase) => timeOf(testCase.createdAt) > timeOf(run.createdAt),
-  );
-});
-
-/** True when a newer run exists than the newest proposal accounts for. */
+/** True when recommendations predate the freshest evidence shown in the workspace. */
 const recommendationsStale = computed(() => {
   const newest = optimizerStore.recommendations[0];
   if (!newest) return false;
   if (optimizerStore.proposedRecommendations.length === 0) return true;
-  return timeOf(latestRun.value?.completedAt) > timeOf(newest.createdAt);
+  return Math.max(
+    timeOf(optimizerStore.latestAnalysis?.completedAt),
+    ...optimizerStore.testCases.map((testCase) => timeOf(testCase.createdAt)),
+  ) > timeOf(newest.createdAt);
 });
-
-function stateFor(
-  hasRun: boolean,
-  isStale: boolean,
-  lockedReason: string | null,
-): StepState {
-  if (lockedReason) return 'locked';
-  if (!hasRun) return 'pending';
-  return isStale ? 'stale' : 'done';
-}
-
-const loopSteps = computed<LoopStep[]>(() => {
-  const analysis = optimizerStore.latestAnalysis;
-  const run = latestRun.value;
-  const noCalls = (overview.value?.calls.total ?? 0) === 0;
-
-  const steps: LoopStep[] = [
-    {
-      key: 'analysis',
-      label: 'Analyse transcripts',
-      icon: ClipboardList,
-      state: stateFor(
-        Boolean(analysis),
-        analysisStale.value,
-        noCalls ? 'No call transcripts to read yet' : null,
-      ),
-      detail: !analysis
-        ? noCalls
-          ? 'No call transcripts to read yet'
-          : `${pluralise(overview.value?.calls.total ?? 0, 'transcript')} ready to read`
-        : analysisStale.value
-          ? 'New calls or a config change since this ran'
-          : `${pluralise(optimizerStore.issues.length, 'issue')} found ${formatRelative(analysis.completedAt)}`,
-      isNext: false,
-      busy: analysisJob.isRunning.value,
-    },
-    {
-      key: 'test-generation',
-      label: 'Generate tests',
-      icon: FlaskConical,
-      // Writing the suite and running it are one loop with two actions, so they
-      // share a card. They stay separate steps because their staleness differs:
-      // a current suite can still hold a score measured two versions ago.
-      group: 'testing',
-      state: stateFor(
-        hasTestCases.value,
-        testCasesStale.value,
-        analysis ? null : 'Run an analysis first',
-      ),
-      detail: !analysis
-        ? 'Run an analysis first'
-        : !hasTestCases.value
-          ? 'Write a suite from the agent prompt and its issues'
-          : testCasesStale.value
-            ? 'Written before the latest analysis'
-            : `${pluralise(optimizerStore.testCases.length, 'case')} covering the known issues`,
-      isNext: false,
-      busy: testGenJob.isRunning.value,
-    },
-    {
-      key: 'test-run',
-      label: 'Run suite',
-      icon: PlayCircle,
-      group: 'testing',
-      state: stateFor(
-        Boolean(run),
-        runStale.value,
-        hasTestCases.value ? null : 'Generate a test suite first',
-      ),
-      detail: !hasTestCases.value
-        ? 'Generate a test suite first'
-        : !run
-          ? 'Score the agent as it is configured today'
-          : runStale.value
-            ? `Last score measured agent v${run.agentVersion}, now on v${agent.value?.currentVersion}`
-            : `Scored ${run.score} on v${run.agentVersion} ${formatRelative(run.completedAt)}`,
-      isNext: false,
-      busy: testRunJob.isRunning.value,
-    },
-    {
-      key: 'recommendations',
-      label: 'Recommend fixes',
-      icon: Lightbulb,
-      state: stateFor(
-        optimizerStore.recommendations.length > 0,
-        recommendationsStale.value,
-        analysis || run ? null : 'Analyse or run tests first',
-      ),
-      detail:
-        !analysis && !run
-          ? 'Analyse or run tests first'
-          : optimizerStore.recommendations.length === 0
-            ? 'Turn issues and failures into concrete changes'
-            : optimizerStore.proposedRecommendations.length === 0
-              ? 'All proposals decided — regenerate for fresh ones'
-              : `${pluralise(optimizerStore.proposedRecommendations.length, 'proposal')} awaiting review`,
-      isNext: false,
-      busy: recommendJob.isRunning.value,
-    },
-  ];
-
-  // Exactly one step is the recommended next action: the earliest that is
-  // actionable and not already up to date.
-  const next = steps.find((step) => step.state === 'pending' || step.state === 'stale');
-  if (next) next.isNext = true;
-
-  return steps;
-});
-
-/** Routes a stepper click to the matching job runner. */
-async function runStep(key: string): Promise<void> {
-  switch (key) {
-    case 'analysis':
-      await analysisJob.start(() => api.startAnalysis(props.agentId));
-      return;
-    case 'test-generation':
-      await testGenJob.start(() =>
-        api.generateTestCases(props.agentId, { replaceExisting: true }),
-      );
-      return;
-    case 'test-run':
-      await runSuite();
-      return;
-    case 'recommendations':
-      await recommendJob.start(() => api.generateRecommendations(props.agentId));
-      return;
-    default:
-      return;
-  }
-}
 
 /* Derived view state ------------------------------------------------------- */
-
-const latestRun = computed(() => optimizerStore.testRuns[0] ?? null);
 
 const hasAnalysis = computed(() => Boolean(optimizerStore.latestAnalysis));
 const hasTestCases = computed(() => optimizerStore.testCases.length > 0);
@@ -386,6 +201,24 @@ const capturedNothing = computed(() => {
   return !captured || Object.keys(captured).length === 0;
 });
 
+const optimizeLabel = computed(() => {
+  if (anyJobRunning.value) return 'Optimizing';
+  if (pendingRecommendations.value.length || recommendationsStale.value) return 'Refresh recommendations';
+  return 'Optimize agent';
+});
+
+const optimizeStatus = computed(() => {
+  if (analysisJob.isRunning.value) return 'Analyzing recent call transcripts';
+  if (testGenJob.isRunning.value) return 'Generating focused test cases';
+  if (recommendJob.isRunning.value) return 'Preparing recommended changes';
+  if (pendingRecommendations.value.length) {
+    return `${pluralise(pendingRecommendations.value.length, 'recommendation')} ready for review`;
+  }
+  if (optimizerStore.recommendations.length > 0) return 'All recommendations have been reviewed';
+  if (hasAnalysis.value || hasTestCases.value) return 'Ready to refresh recommendations';
+  return `${pluralise(overview.value?.calls.total ?? 0, 'transcript')} available`;
+});
+
 function issuesFor(recommendation: Recommendation) {
   return recommendation.linkedIssueIds
     .map((id) => optimizerStore.issuesById.get(id))
@@ -412,10 +245,28 @@ watch(
   async () => {
     optimizerStore.clear();
     notice.value = null;
-    activeTab.value = 'performance';
+    activeTab.value = 'recommendations';
     await load();
   },
 );
+
+async function runOptimization(): Promise<void> {
+  notice.value = null;
+  activeTab.value = 'recommendations';
+
+  await analysisJob.start(() => api.startAnalysis(props.agentId));
+  if (analysisJob.error.value) return;
+
+  await testGenJob.start(() =>
+    api.generateTestCases(props.agentId, { replaceExisting: true }),
+  );
+  if (testGenJob.error.value) return;
+
+  await recommendJob.start(() => api.generateRecommendations(props.agentId, { replaceExisting: true }));
+  if (recommendJob.error.value) return;
+
+  notice.value = 'Optimization complete. Review the recommended changes below.';
+}
 
 /* Apply confirmation ------------------------------------------------------- */
 
@@ -505,29 +356,6 @@ async function revertRecommendation(recommendation: Recommendation): Promise<voi
   }`;
 }
 
-/**
- * Runs the suite.
- *
- * The first run is a **baseline**: there is nothing to compare it against, and
- * its job is to surface failures the transcripts could not — real calls only
- * show what callers happened to do, while the suite probes the scenarios they
- * have not tried yet. Those failures are then evidence the recommender reads.
- *
- * Every run after that is a **verification** pass pinned to the previous one,
- * so the results screen can show a per-case delta rather than two unrelated
- * scores. Labelling the first run "verification" would claim it verified
- * something when there was no prior state to verify against.
- */
-async function runSuite(): Promise<void> {
-  const previous = latestRun.value;
-
-  await testRunJob.start(() =>
-    api.startTestRun(props.agentId, {
-      purpose: previous ? 'verification' : 'baseline',
-      ...(previous ? { comparisonRunId: previous.id } : {}),
-    }),
-  );
-}
 </script>
 
 <template>
@@ -574,64 +402,58 @@ async function runSuite(): Promise<void> {
 
     <!-- Overview -------------------------------------------------------- -->
     <Card v-if="overview">
-      <CardContent class="pt-5">
-        <div class="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
+      <CardContent class="space-y-5 pt-5">
+        <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div class="max-w-2xl space-y-1">
+            <p class="text-sm font-medium">Optimize this agent end to end</p>
+            <p class="text-xs leading-relaxed text-muted-foreground">
+              {{ optimizeStatus }}. One run analyzes real calls, generates focused test cases,
+              and prepares recommended changes for review.
+            </p>
+          </div>
+          <Button
+            size="lg"
+            class="w-full sm:w-auto"
+            :loading="anyJobRunning"
+            :disabled="noTranscripts"
+            @click="runOptimization"
+          >
+            <Wand2 v-if="!anyJobRunning" />
+            {{ noTranscripts ? 'No transcripts yet' : optimizeLabel }}
+          </Button>
+        </div>
+
+        <div class="grid gap-4 sm:grid-cols-3">
           <ScoreStat
-            label="Transcript score (real calls)"
+            label="Call score"
             :value="overview.analysis?.score ?? null"
             tone
-            tooltip="Quality score from the latest analysis of real Voice AI call transcripts. It reflects how well the live agent handled actual conversations."
+            tooltip="Quality score from the latest analysis of real Voice AI call transcripts."
             :hint="
               overview.analysis
-                ? `${pluralise(overview.calls.total, 'call')} analysed`
-                : 'No analysis yet'
+                ? `${pluralise(overview.calls.total, 'call')} analyzed`
+                : `${pluralise(overview.calls.total, 'call')} ready`
             "
           />
           <ScoreStat
             label="Open issues"
             :value="overview.issues.open"
-            tooltip="Unresolved problems found in transcript analysis, such as missed instructions, weak responses, or behavior that needs prompt changes."
+            tooltip="Unresolved problems found in transcript analysis."
             :hint="
               overview.issues.bySeverity.critical + overview.issues.bySeverity.high > 0
                 ? `${overview.issues.bySeverity.critical} critical · ${overview.issues.bySeverity.high} high`
                 : 'Nothing critical'
             "
           />
-          <!--
-            "Simulated" is in the label rather than the hint. This tile sits
-            beside "Transcript score", which is measured on real calls, and at a
-            glance the two read as the same kind of number. They are not.
-          -->
-          <ScoreStat
-            label="Suite score (simulated)"
-            :value="overview.testing.latestRun?.score ?? null"
-            tone
-            :delta="overview.testing.scoreDelta"
-            tooltip="Score from the latest generated test-suite run. These are simulated conversations designed to check known edge cases, not real customer calls."
-            :hint="
-              overview.testing.latestRun
-                ? `${overview.testing.latestRun.passed}/${overview.testing.activeCases} passing`
-                : `${pluralise(overview.testing.activeCases, 'case')}, never run`
-            "
-          />
           <ScoreStat
             label="Recommendations"
             :value="overview.recommendations.proposed"
-            tooltip="Pending optimizer suggestions for improving the agent. One-click recommendations can be applied automatically; manual ones need review and editing."
+            tooltip="Pending optimizer suggestions for improving the agent."
             :hint="`${overview.recommendations.applicable} one-click · ${overview.recommendations.advisory} manual`"
           />
         </div>
 
-        <Separator class="my-5" />
-
-        <!--
-          The loop as four self-reporting steps. Exactly one is highlighted as
-          the next action, and a result that has been superseded says so rather
-          than looking identical to a fresh one.
-        -->
-        <LoopStepper :steps="loopSteps" :any-busy="anyJobRunning" @run="runStep" />
-
-        <div class="mt-3 space-y-2">
+        <div class="space-y-2">
           <JobProgress
             v-for="entry in jobRunners"
             :key="entry.key"
@@ -650,32 +472,25 @@ async function runSuite(): Promise<void> {
     <!-- Tabs ------------------------------------------------------------ -->
     <Tabs v-model="activeTab">
       <TabsList>
-        <TabsTrigger value="performance">
-          <ClipboardList class="size-3.5" />
-          Performance
-          <Badge v-if="optimizerStore.openIssues.length" variant="secondary">
-            {{ optimizerStore.openIssues.length }}
-          </Badge>
-        </TabsTrigger>
-        <TabsTrigger value="tests">
-          <ListChecks class="size-3.5" />
-          Test cases
-          <Badge v-if="optimizerStore.testCases.length" variant="secondary">
-            {{ optimizerStore.testCases.length }}
-          </Badge>
-        </TabsTrigger>
-        <TabsTrigger value="runs">
-          <PlayCircle class="size-3.5" />
-          Runs
-          <Badge v-if="optimizerStore.testRuns.length" variant="secondary">
-            {{ optimizerStore.testRuns.length }}
-          </Badge>
-        </TabsTrigger>
         <TabsTrigger value="recommendations">
           <Lightbulb class="size-3.5" />
           Recommendations
           <Badge v-if="pendingRecommendations.length" variant="secondary">
             {{ pendingRecommendations.length }}
+          </Badge>
+        </TabsTrigger>
+        <TabsTrigger value="performance">
+          <ClipboardList class="size-3.5" />
+          Evidence
+          <Badge v-if="optimizerStore.openIssues.length" variant="secondary">
+            {{ optimizerStore.openIssues.length }}
+          </Badge>
+        </TabsTrigger>
+        <TabsTrigger value="tests">
+          <FlaskConical class="size-3.5" />
+          Test cases
+          <Badge v-if="optimizerStore.testCases.length" variant="secondary">
+            {{ optimizerStore.testCases.length }}
           </Badge>
         </TabsTrigger>
         <TabsTrigger value="history">
@@ -684,7 +499,91 @@ async function runSuite(): Promise<void> {
         </TabsTrigger>
       </TabsList>
 
-      <!-- Loop 1: performance -->
+      <!-- Recommendations -->
+      <TabsContent value="recommendations" class="space-y-3">
+        <EmptyState
+          v-if="!optimizerStore.recommendations.length"
+          :icon="Lightbulb"
+          title="No recommendations yet"
+          description="Run one optimization pass to analyze transcripts, generate focused test cases, and prepare changes for review."
+        >
+          <Button
+            size="sm"
+            :disabled="noTranscripts"
+            :loading="anyJobRunning"
+            @click="runOptimization"
+          >
+            <Wand2 v-if="!anyJobRunning" />
+            {{ noTranscripts ? 'No transcripts yet' : 'Optimize agent' }}
+          </Button>
+        </EmptyState>
+
+        <template v-else>
+          <Alert v-if="recommendationsStale" variant="advisory">
+            <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <p class="text-xs">
+                Newer evidence is available. Refresh to regenerate recommendations from the latest
+                analysis and test cases.
+              </p>
+              <Button
+                size="sm"
+                variant="outline"
+                :loading="anyJobRunning"
+                @click="runOptimization"
+              >
+                <Wand2 v-if="!anyJobRunning" />
+                Refresh
+              </Button>
+            </div>
+          </Alert>
+
+          <CollapsibleSection
+            v-if="pendingRecommendations.length"
+            title="Ready for review"
+            :count="pendingRecommendations.length"
+            :summary="pendingSummary"
+          >
+            <RecommendationCard
+              v-for="recommendation in pendingRecommendations"
+              :key="recommendation.id"
+              :recommendation="recommendation"
+              :linked-issues="issuesFor(recommendation)"
+              :busy="optimizerStore.busy === recommendation.id"
+              @apply="requestApply"
+              @dismiss="optimizerStore.rejectRecommendation(props.agentId, recommendation.id)"
+            />
+          </CollapsibleSection>
+
+          <EmptyState
+            v-else
+            :icon="Sparkles"
+            title="No pending recommendations"
+            description="Everything generated in the last pass has already been reviewed."
+          />
+
+          <CollapsibleSection
+            v-if="settledRecommendations.length"
+            title="Already decided"
+            :count="settledRecommendations.length"
+            :summary="settledSummary"
+            tone="secondary"
+            :default-open="false"
+          >
+            <RecommendationCard
+              v-for="recommendation in settledRecommendations"
+              :key="recommendation.id"
+              :recommendation="recommendation"
+              :linked-issues="issuesFor(recommendation)"
+              :busy="optimizerStore.busy === recommendation.id"
+              :current-version="agent?.currentVersion"
+              @restore="optimizerStore.restoreRecommendation(props.agentId, recommendation.id)"
+              @revert="revertRecommendation"
+            />
+          </CollapsibleSection>
+        </template>
+      </TabsContent>
+
+      <!-- Evidence -->
       <TabsContent value="performance" class="space-y-4">
         <Card v-if="overview?.analysis">
           <CardContent class="space-y-2 pt-5">
@@ -711,15 +610,16 @@ async function runSuite(): Promise<void> {
           v-if="!optimizerStore.openIssues.length && !hasAnalysis"
           :icon="ClipboardList"
           title="No analysis yet"
-          description="Read the agent's real call transcripts to find recurring problems. This is the first loop and everything else builds on it."
+          description="Run optimization to read real call transcripts and find recurring problems."
         >
           <Button
             size="sm"
             :disabled="noTranscripts"
-            :loading="analysisJob.isRunning.value"
-            @click="analysisJob.start(() => api.startAnalysis(props.agentId))"
+            :loading="anyJobRunning"
+            @click="runOptimization"
           >
-            {{ noTranscripts ? 'No transcripts yet' : 'Analyse transcripts' }}
+            <Wand2 v-if="!anyJobRunning" />
+            {{ noTranscripts ? 'No transcripts yet' : 'Optimize agent' }}
           </Button>
         </EmptyState>
 
@@ -771,40 +671,32 @@ async function runSuite(): Promise<void> {
         </CollapsibleSection>
       </TabsContent>
 
-      <!-- Loop 2a: test cases -->
+      <!-- Test cases -->
       <TabsContent value="tests" class="space-y-3">
         <EmptyState
           v-if="!hasTestCases"
           :icon="FlaskConical"
           title="No test cases yet"
-          description="Test cases are written from the agent's own prompt plus the issues found in real calls, so each edge case targets a problem that actually happened."
+          description="Run optimization to create focused scenarios from the agent prompt and transcript issues."
         >
           <Button
             size="sm"
-            :disabled="!hasAnalysis"
-            :loading="testGenJob.isRunning.value"
-            @click="testGenJob.start(() => api.generateTestCases(props.agentId, { replaceExisting: true }))"
+            :disabled="noTranscripts"
+            :loading="anyJobRunning"
+            @click="runOptimization"
           >
-            {{ hasAnalysis ? 'Generate test suite' : 'Run an analysis first' }}
+            <Wand2 v-if="!anyJobRunning" />
+            {{ noTranscripts ? 'No transcripts yet' : 'Optimize agent' }}
           </Button>
         </EmptyState>
 
         <template v-else>
-          <div class="flex items-center justify-between gap-3">
+          <div class="flex items-center justify-between gap-3 rounded-lg border bg-muted/30 px-3 py-2">
             <p class="text-xs text-muted-foreground">
               {{ optimizerStore.testCases.filter((t) => t.type === 'happy_path').length }} happy path ·
               {{ optimizerStore.testCases.filter((t) => t.type === 'edge_case').length }} edge cases
             </p>
-            <Button
-              size="sm"
-              variant="outline"
-              :loading="testRunJob.isRunning.value"
-              :disabled="anyJobRunning"
-              @click="runSuite"
-            >
-              <PlayCircle v-if="!testRunJob.isRunning.value" />
-              Run suite
-            </Button>
+            <Badge variant="outline">Used for recommendations</Badge>
           </div>
 
           <TestCaseCard
@@ -814,106 +706,6 @@ async function runSuite(): Promise<void> {
             :busy="optimizerStore.busy === testCase.id"
             @archive="optimizerStore.archiveTestCase(props.agentId, testCase.id)"
           />
-        </template>
-      </TabsContent>
-
-      <!-- Loop 2b: runs -->
-      <TabsContent value="runs" class="space-y-2">
-        <EmptyState
-          v-if="!optimizerStore.testRuns.length"
-          :icon="PlayCircle"
-          title="No test runs yet"
-          description="A run simulates every case against the agent's live configuration and scores each success criterion."
-        />
-
-        <div v-else class="divide-y overflow-hidden rounded-lg border">
-          <RouterLink
-            v-for="run in optimizerStore.testRuns"
-            :key="run.id"
-            :to="{ name: 'test-run', params: { agentId: props.agentId, testRunId: run.id } }"
-            class="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-accent/40"
-          >
-            <div class="min-w-0 flex-1 space-y-0.5">
-              <div class="flex items-center gap-2">
-                <Badge variant="outline">{{ runPurposeLabel(run.purpose) }}</Badge>
-                <Badge variant="outline">Agent v{{ run.agentVersion }}</Badge>
-                <Badge v-if="run.status !== 'completed'" variant="medium">
-                  {{ titleCase(run.status) }}
-                </Badge>
-              </div>
-              <p class="text-[11px] text-muted-foreground">
-                {{ formatRelative(run.createdAt) }} ·
-                {{ run.totals.passed }} passed, {{ run.totals.failed }} failed<template
-                  v-if="run.totals.errored"
-                  >, {{ run.totals.errored }} errored</template
-                >
-              </p>
-            </div>
-            <span class="text-lg font-semibold tabular-nums">{{ run.score }}</span>
-          </RouterLink>
-        </div>
-      </TabsContent>
-
-      <!-- Loop 3: recommendations -->
-      <TabsContent value="recommendations" class="space-y-3">
-        <EmptyState
-          v-if="!optimizerStore.recommendations.length"
-          :icon="Lightbulb"
-          title="No recommendations yet"
-          description="Recommendations are synthesised from transcript issues and failed test criteria. Every one traces back to specific evidence."
-        >
-          <Button
-            size="sm"
-            :disabled="!hasAnalysis && !latestRun"
-            :loading="recommendJob.isRunning.value"
-            @click="recommendJob.start(() => api.generateRecommendations(props.agentId))"
-          >
-            {{ hasAnalysis || latestRun ? 'Generate recommendations' : 'Analyse or run tests first' }}
-          </Button>
-        </EmptyState>
-
-        <template v-else>
-          <CollapsibleSection
-            v-if="pendingRecommendations.length"
-            title="Awaiting your decision"
-            :count="pendingRecommendations.length"
-            :summary="pendingSummary"
-          >
-            <RecommendationCard
-              v-for="recommendation in pendingRecommendations"
-              :key="recommendation.id"
-              :recommendation="recommendation"
-              :linked-issues="issuesFor(recommendation)"
-              :busy="optimizerStore.busy === recommendation.id"
-              @apply="requestApply"
-              @dismiss="optimizerStore.rejectRecommendation(props.agentId, recommendation.id)"
-            />
-          </CollapsibleSection>
-
-          <!--
-            Decided proposals are history, not a to-do list: de-emphasised and
-            folded away by default, with the outcome breakdown on the header so
-            the collapsed state still says something useful.
-          -->
-          <CollapsibleSection
-            v-if="settledRecommendations.length"
-            title="Already decided"
-            :count="settledRecommendations.length"
-            :summary="settledSummary"
-            tone="secondary"
-            :default-open="false"
-          >
-            <RecommendationCard
-              v-for="recommendation in settledRecommendations"
-              :key="recommendation.id"
-              :recommendation="recommendation"
-              :linked-issues="issuesFor(recommendation)"
-              :busy="optimizerStore.busy === recommendation.id"
-              :current-version="agent?.currentVersion"
-              @restore="optimizerStore.restoreRecommendation(props.agentId, recommendation.id)"
-              @revert="revertRecommendation"
-            />
-          </CollapsibleSection>
         </template>
       </TabsContent>
 

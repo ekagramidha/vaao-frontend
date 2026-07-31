@@ -29,6 +29,7 @@ export function useJobRunner(options: JobRunnerOptions = {}) {
   const isStarting = ref(false);
 
   let timer: ReturnType<typeof setTimeout> | null = null;
+  let timerResolve: (() => void) | null = null;
   let cancelled = false;
 
   const isRunning = computed(
@@ -36,7 +37,7 @@ export function useJobRunner(options: JobRunnerOptions = {}) {
   );
 
   const progressLabel = computed(() => {
-    if (isStarting.value) return 'Starting';
+    if (isStarting.value && !job.value) return 'Starting';
     return job.value?.progress.message ?? '';
   });
 
@@ -50,6 +51,19 @@ export function useJobRunner(options: JobRunnerOptions = {}) {
   function stop(): void {
     if (timer) clearTimeout(timer);
     timer = null;
+    timerResolve?.();
+    timerResolve = null;
+  }
+
+  function wait(ms: number): Promise<void> {
+    return new Promise((resolve) => {
+      timerResolve = resolve;
+      timer = setTimeout(() => {
+        timer = null;
+        timerResolve = null;
+        resolve();
+      }, ms);
+    });
   }
 
   async function poll(jobId: string, attempt = 0): Promise<void> {
@@ -76,12 +90,14 @@ export function useJobRunner(options: JobRunnerOptions = {}) {
         return;
       }
 
-      timer = setTimeout(() => void poll(jobId, attempt + 1), POLL_INTERVAL_MS);
+      await wait(POLL_INTERVAL_MS);
+      await poll(jobId, attempt + 1);
     } catch (caught) {
       // A single failed poll is usually a blip; keep trying rather than
       // abandoning a job that is still running server-side.
       if (caught instanceof ApiClientError && caught.code === 'NETWORK_ERROR') {
-        timer = setTimeout(() => void poll(jobId, attempt + 1), POLL_INTERVAL_MS);
+        await wait(POLL_INTERVAL_MS);
+        await poll(jobId, attempt + 1);
         return;
       }
       error.value = caught instanceof Error ? caught.message : 'Could not read job status.';
@@ -98,6 +114,7 @@ export function useJobRunner(options: JobRunnerOptions = {}) {
     try {
       const { data } = await starter();
       job.value = data;
+      isStarting.value = false;
       await poll(data.id);
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : 'Could not start the job.';

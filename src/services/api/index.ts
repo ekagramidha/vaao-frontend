@@ -12,8 +12,6 @@ import type {
   Recommendation,
   RollbackResult,
   TestCase,
-  TestResult,
-  TestRun,
 } from '@/types/api';
 
 /**
@@ -75,24 +73,6 @@ export const api = {
     }),
   clearManualRun: (testCaseId: string) =>
     request<TestCase>(`/test-cases/${testCaseId}/manual-run`, { method: 'DELETE' }),
-
-  startTestRun: (
-    agentId: string,
-    body: {
-      testCaseIds?: string[];
-      purpose?: 'baseline' | 'verification' | 'ad_hoc';
-      comparisonRunId?: string;
-      triggeringRecommendationIds?: string[];
-    } = {},
-  ) => request<Job>(`/agents/${agentId}/test-runs`, { method: 'POST', body }),
-  listTestRuns: (agentId: string) => request<TestRun[]>(`/agents/${agentId}/test-runs`),
-  getTestRun: (testRunId: string) =>
-    request<{
-      run: TestRun;
-      results: TestResult[];
-      comparison: TestRun | null;
-      comparisonResults: Array<Pick<TestResult, 'id' | 'testCaseId' | 'score' | 'status'>>;
-    }>(`/test-runs/${testRunId}`),
 
   /* Loop 3 — recommend, apply, roll back --------------------------------- */
 

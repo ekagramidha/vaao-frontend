@@ -376,15 +376,6 @@ export interface AgentOverview {
   issues: { open: number; bySeverity: Record<Severity, number> };
   testing: {
     activeCases: number;
-    latestRun: {
-      id: string;
-      score: number;
-      passed: number;
-      failed: number;
-      errored: number;
-      completedAt: string | null;
-    } | null;
-    scoreDelta: number | null;
   };
   recommendations: { proposed: number; applicable: number; advisory: number; applied: number };
 }

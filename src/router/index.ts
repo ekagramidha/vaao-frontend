@@ -32,12 +32,6 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/AgentWorkspaceView.vue'),
     props: true,
   },
-  {
-    path: '/agents/:agentId/runs/:testRunId',
-    name: 'test-run',
-    component: () => import('@/views/TestRunView.vue'),
-    props: true,
-  },
   { path: '/:pathMatch(.*)*', redirect: '/' },
 ];
 

@@ -172,7 +172,7 @@ const statusVariant = computed(() => {
             and
           </template>
           <template v-if="props.recommendation.linkedCriterionKeys.length">
-            {{ props.recommendation.linkedCriterionKeys.length }} failed criteri{{
+            {{ props.recommendation.linkedCriterionKeys.length }} test criteri{{
               props.recommendation.linkedCriterionKeys.length === 1 ? 'on' : 'a'
             }}
           </template>
